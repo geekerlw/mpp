@@ -386,6 +386,7 @@ static MPP_RET allocator_ion_import(void *ctx, MppBufferInfo *data)
     }
 
     data->hnd = (void *)fd_data.handle;
+    ion_map_fd(p->ion_device, data->hnd, &data->fd);
     data->ptr = NULL;
 RET:
     ion_dbg_func("leave: ret %d handle %d\n", ret, data->hnd);
@@ -423,6 +424,10 @@ static MPP_RET allocator_ion_release(void *ctx, MppBufferInfo *data)
     }
     p = (allocator_ctx_ion *)ctx;
 
+    if (data->fd > 0) {
+        close(data->fd);
+        data->fd = -1;
+    }
     if (data->ptr) {
         munmap(data->ptr, data->size);
         data->ptr = NULL;
