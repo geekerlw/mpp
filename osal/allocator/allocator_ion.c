@@ -385,7 +385,6 @@ static MPP_RET allocator_ion_import(void *ctx, MppBufferInfo *data)
         goto RET;
     }
 
-    data->fd = dup(fd_data.fd);
     data->hnd = (void *)fd_data.handle;
     ion_map_fd(p->ion_device, data->hnd, &data->fd);
     data->ptr = NULL;

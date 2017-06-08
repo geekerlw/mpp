@@ -326,9 +326,7 @@ const char *mpp_get_vcodec_dev_name(MppCtxType type, MppCodingType coding)
 {
     const char *dev = NULL;
 #ifdef RKPLATFORM
-    RK_U32 vcodec_type = flag & DEV_CODEC_MASK;
-    RockchipSocType soc_type = vcodec_type ? ROCKCHIP_SOC_AUTO
-                               : MppPlatformService::get_instance()->get_soc_type();
+    RockchipSocType soc_type = MppPlatformService::get_instance()->get_soc_type();
     switch (soc_type) {
     case ROCKCHIP_SOC_RK3066 :
     case ROCKCHIP_SOC_RK3188 : {
@@ -435,7 +433,6 @@ const char *mpp_get_vcodec_dev_name(MppCtxType type, MppCodingType coding)
         } else if (coding == MPP_VIDEO_CodingMJPEG)
             dev = mpp_find_device(mpp_vpu_dev);
     } break;
-    case ROCKCHIP_SOC_AUTO :
     default : {
         /* default case for unknown compatible  */
         RK_U32 vcodec_type = mpp_get_vcodec_type();
