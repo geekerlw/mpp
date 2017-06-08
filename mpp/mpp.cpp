@@ -180,6 +180,20 @@ void Mpp::clear()
     if (mFrameGroup)
         mpp_buffer_group_set_listener((MppBufferGroupImpl *)mFrameGroup, NULL);
 
+    if (mType == MPP_CTX_ENC) {
+        if (mThreadCodec)
+            mThreadCodec->set_status(MPP_THREAD_STOPPING);
+
+        /*
+         * encode thread may block in dequeue output task
+         * so send sigal to awake it
+         */
+        if (mOutputTaskQueue) {
+            MppPort port = mpp_task_queue_get_port(mOutputTaskQueue, MPP_PORT_INPUT);
+            mpp_port_awake(port);
+        }
+    }
+
     if (mThreadCodec)
         mThreadCodec->stop();
     if (mThreadHal)
@@ -267,7 +281,7 @@ MPP_RET Mpp::get_frame(MppFrame *frame)
     RK_S32 ret;
 
     if (!mInitDone)
-        return MPP_NOK;
+        return MPP_ERR_INIT;
 
     AutoMutex autoLock(mFrames->mutex());
     MppFrame first = NULL;
@@ -315,7 +329,7 @@ MPP_RET Mpp::get_frame(MppFrame *frame)
 MPP_RET Mpp::put_frame(MppFrame frame)
 {
     if (!mInitDone)
-        return MPP_NOK;
+        return MPP_ERR_INIT;
 
     MPP_RET ret = MPP_NOK;
     MppTask task = NULL;
@@ -397,7 +411,7 @@ RET:
 MPP_RET Mpp::get_packet(MppPacket *packet)
 {
     if (!mInitDone)
-        return MPP_NOK;
+        return MPP_ERR_INIT;
 
     MPP_RET ret = MPP_OK;
     MppTask task = NULL;
@@ -440,7 +454,7 @@ RET:
 MPP_RET Mpp::poll(MppPortType type, MppPollType timeout)
 {
     if (!mInitDone)
-        return MPP_NOK;
+        return MPP_ERR_INIT;
 
     MPP_RET ret = MPP_NOK;
     MppTaskQueue port = NULL;
@@ -465,7 +479,7 @@ MPP_RET Mpp::poll(MppPortType type, MppPollType timeout)
 MPP_RET Mpp::dequeue(MppPortType type, MppTask *task)
 {
     if (!mInitDone)
-        return MPP_NOK;
+        return MPP_ERR_INIT;
 
     MPP_RET ret = MPP_NOK;
     MppTaskQueue port = NULL;
@@ -490,7 +504,7 @@ MPP_RET Mpp::dequeue(MppPortType type, MppTask *task)
 MPP_RET Mpp::enqueue(MppPortType type, MppTask task)
 {
     if (!mInitDone)
-        return MPP_NOK;
+        return MPP_ERR_INIT;
 
     MPP_RET ret = MPP_NOK;
     MppTaskQueue port = NULL;
@@ -574,7 +588,7 @@ MPP_RET Mpp::control(MpiCmd cmd, MppParam param)
 MPP_RET Mpp::reset()
 {
     if (!mInitDone)
-        return MPP_OK;
+        return MPP_ERR_INIT;
 
     MppPacket pkt = NULL;
 
@@ -733,7 +747,7 @@ MPP_RET Mpp::control_dec(MpiCmd cmd, MppParam param)
     } break;
     case MPP_DEC_GET_FREE_PACKET_SLOT_COUNT: {
         *((RK_S32 *)param) = MPP_MAX_INPUT_PACKETS - mPackets->list_size();
-         ret = MPP_OK;
+        ret = MPP_OK;
     } break;
     default : {
     } break;

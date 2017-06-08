@@ -14,9 +14,9 @@ if (HAVE_DRM)
 endif()
 
 set(MPP_ALLOCATOR
-	allocator/allocator_std.c
-	allocator/allocator_ion.c
-	${DRM_FILES}
+    allocator/allocator_std.c
+    allocator/allocator_ion.c
+    ${DRM_FILES}
 )
 
 add_library(osal STATIC
@@ -30,8 +30,8 @@ add_library(osal STATIC
     mpp_mem.cpp
     mpp_env.cpp
     mpp_log.cpp
-# Those files have a compiler marco protection, so only target
-# OS will be built
+    # Those files have a compiler marco protection, so only target
+    # OS will be built
     android/os_allocator.c
     android/os_mem.c
     android/os_env.c
@@ -47,27 +47,22 @@ add_library(osal STATIC
     ${MPP_ALLOCATOR}
 )
 
-TARGET_LINK_LIBRARIES(osal
-# force to use pthread here, better to use the system thread library instead.
-${CMAKE_THREAD_LIBS_INIT}
+target_link_libraries(osal ${CMAKE_THREAD_LIBS_INIT})
+
+target_include_directories(osal PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/inc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/allocator"
 )
 
-TARGET_INCLUDE_DIRECTORIES(osal PUBLIC
-	"${CMAKE_CURRENT_SOURCE_DIR}"
-	"${CMAKE_CURRENT_SOURCE_DIR}/inc"
-	"${CMAKE_CURRENT_SOURCE_DIR}/allocator"
-)
-
-TARGET_COMPILE_OPTIONS(osal PUBLIC
-${PTHREAD_CFLAGS}
-)
+set_target_properties(osal PROPERTIES FOLDER "osal")
 
 # leave those special platform here
 if(ANDROID)
     add_definitions(-static)
     # in Android pthread is in libc, also need liblog
     target_link_libraries(osal log stdc++ m)
-endif()
+endif(ANDROID)
 
 # unit test
 add_subdirectory(test)

@@ -321,9 +321,21 @@ static MPP_RET os_allocator_drm_import(void *ctx, MppBufferInfo *data)
 
 static MPP_RET os_allocator_drm_release(void *ctx, MppBufferInfo *data)
 {
-    (void)ctx;
-    munmap(data->ptr, data->size);
-    close(data->fd);
+    allocator_ctx_drm *p = NULL;
+
+    if (NULL == ctx) {
+        drm_dbg(DRM_FUNCTION, "invalid ctx");
+        return MPP_ERR_NULL_PTR;
+    }
+    p = (allocator_ctx_drm *)ctx;
+
+    if (data->ptr) {
+        munmap(data->ptr, data->size);
+        data->ptr = NULL;
+    }
+
+    drm_free(p->drm_device, (RK_U32)((intptr_t)data->hnd));
+
     return MPP_OK;
 }
 
@@ -332,14 +344,20 @@ static MPP_RET os_allocator_drm_free(void *ctx, MppBufferInfo *data)
     allocator_ctx_drm *p = NULL;
 
     if (NULL == ctx) {
-        mpp_err("os_allocator_close Android do not accept NULL input\n");
+        drm_dbg(DRM_FUNCTION, "invalid ctx");
         return MPP_ERR_NULL_PTR;
     }
-
     p = (allocator_ctx_drm *)ctx;
-    munmap(data->ptr, data->size);
-    close(data->fd);
+
+    if (data->ptr) {
+        munmap(data->ptr, data->size);
+        data->ptr = NULL;
+    }
+
     drm_free(p->drm_device, (RK_U32)((intptr_t)data->hnd));
+    /* Not necessary here */
+    close(data->fd);
+
     return MPP_OK;
 }
 

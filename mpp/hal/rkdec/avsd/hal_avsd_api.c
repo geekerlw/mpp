@@ -102,7 +102,7 @@ MPP_RET hal_avsd_init(void *decoder, MppHalCfg *cfg)
     //!< mpp_device_init
 #ifdef RKPLATFORM
     if (p_hal->vpu_socket <= 0) {
-        p_hal->vpu_socket = mpp_device_init(MPP_CTX_DEC, MPP_VIDEO_CodingAVS, 0);
+        p_hal->vpu_socket = mpp_device_init(&p_hal->dev_ctx, MPP_CTX_DEC, MPP_VIDEO_CodingAVS);
         if (p_hal->vpu_socket <= 0) {
             mpp_err("p_hal->vpu_socket <= 0\n");
             ret = MPP_ERR_UNKNOW;
@@ -354,7 +354,7 @@ MPP_RET hal_avsd_control(void *decoder, RK_S32 cmd_type, void *param)
 const MppHalApi hal_api_avsd = {
     "avsd_rkdec",
     MPP_CTX_DEC,
-    MPP_VIDEO_CodingAVS,
+    MPP_VIDEO_CodingAVSPLUS,
     sizeof(AvsdHalCtx_t),
     0,
     hal_avsd_init,

@@ -21,6 +21,7 @@
 
 #include "mpp_hal.h"
 #include "mpp_log.h"
+#include "mpp_device.h"
 
 #include "dxva_syntax.h"
 #include "h264d_syntax.h"
@@ -126,6 +127,9 @@ typedef struct h264d_hal_ctx_t {
     MppBuffer                cabac_buf;
     RK_S32                   vpu_socket;
     IOInterruptCB            init_cb;
+    MppDevCtx                dev_ctx;
+    RK_U32                   vcodec_type;
+    RK_U32                   hard_mode;
 } H264dHalCtx_t;
 
 

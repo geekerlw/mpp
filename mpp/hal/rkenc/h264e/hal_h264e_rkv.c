@@ -2047,7 +2047,7 @@ static MPP_RET h264e_rkv_set_osd_plt(H264eHalContext *ctx, void *param)
     MppEncOSDPlt *plt = (MppEncOSDPlt *)param;
     h264e_hal_enter();
     if (plt->buf) {
-        ctx->osd_plt_type = 0;
+        ctx->osd_plt_type = H264E_OSD_PLT_TYPE_USERDEF;
 #ifdef RKPLATFORM
         if (MPP_OK != mpp_device_send_reg_with_id(ctx->vpu_fd,
                                                   H264E_IOC_SET_OSD_PLT, param,
@@ -2057,7 +2057,7 @@ static MPP_RET h264e_rkv_set_osd_plt(H264eHalContext *ctx, void *param)
         }
 #endif
     } else {
-        ctx->osd_plt_type = 1;
+        ctx->osd_plt_type = H264E_OSD_PLT_TYPE_DEFAULT;
     }
 
     h264e_hal_leave();
@@ -2071,6 +2071,9 @@ static MPP_RET h264e_rkv_set_osd_data(H264eHalContext *ctx, void *param)
     RK_U32 num = src->num_region;
 
     h264e_hal_enter();
+    if (ctx->osd_plt_type == H264E_OSD_PLT_TYPE_NONE)
+        mpp_err("warning: plt type is invalid\n");
+
     if (num > 8) {
         h264e_hal_err("number of region %d exceed maxinum 8");
         return MPP_NOK;
@@ -2149,6 +2152,7 @@ MPP_RET hal_h264e_rkv_init(void *hal, MppHalCfg *cfg)
     ctx->frame_cnt_gen_ready = 0;
     ctx->frame_cnt_send_ready = 0;
     ctx->num_frames_to_send = 1;
+    ctx->osd_plt_type = H264E_OSD_PLT_TYPE_NONE;
 
     /* support multi-refs */
     dpb_ctx = (H264eRkvDpbCtx *)ctx->dpb_ctx;
@@ -2158,7 +2162,7 @@ MPP_RET hal_h264e_rkv_init(void *hal, MppHalCfg *cfg)
     ctx->vpu_fd = -1;
 #ifdef RKPLATFORM
     if (ctx->vpu_fd <= 0) {
-        ctx->vpu_fd = mpp_device_init(MPP_CTX_ENC, MPP_VIDEO_CodingAVC, 0);
+        ctx->vpu_fd = mpp_device_init(&ctx->dev_ctx, MPP_CTX_ENC, MPP_VIDEO_CodingAVC);
         if (ctx->vpu_fd <= 0) {
             h264e_hal_err("get vpu_socket(%d) <=0, failed. \n", ctx->vpu_fd);
             return MPP_ERR_UNKNOW;
@@ -2333,8 +2337,8 @@ static MPP_RET h264e_rkv_set_rc_regs(H264eHalContext *ctx, H264eRkvRegSet *regs,
 
     h264e_rkv_set_mb_rc(ctx);
 
-    if (ctx->frame_cnt == 0) {
-        /* first frame, will be discarded.
+    if ((ctx->frame_cnt == 0) || (ctx->frame_cnt == 1)) {
+        /* The first and second frame(I and P frame), will be discarded.
          * just for getting real qp for target bits
          */
         m_cfg = mb_rc_m_cfg[H264E_MB_RC_WIDE_RANGE];
@@ -2430,7 +2434,9 @@ h264e_rkv_set_osd_regs(H264eHalContext *ctx, H264eRkvRegSet *regs)
             MppEncOSDRegion *region = osd_data->region;
 
             regs->swreg65.osd_clk_sel    = 1;
-            regs->swreg65.osd_plt_type   = ctx->osd_plt_type;
+            regs->swreg65.osd_plt_type   = ctx->osd_plt_type == H264E_OSD_PLT_TYPE_NONE ?
+                                           H264E_OSD_PLT_TYPE_DEFAULT :
+                                           ctx->osd_plt_type;
 
             for (k = 0; k < num; k++) {
                 regs->swreg65.osd_en |= region[k].enable << k;
@@ -3432,7 +3438,7 @@ MPP_RET hal_h264e_rkv_wait(void *hal, HalTaskInfo *task)
     h264e_rkv_set_feedback(ctx, reg_out, enc_task);
 
     /* we need re-encode */
-    if (ctx->frame_cnt == 1) {
+    if ((ctx->frame_cnt == 1) || (ctx->frame_cnt == 2)) {
         if (fb->hw_status & RKV_H264E_INT_BIT_STREAM_OVERFLOW) {
             RK_S32 new_qp = fb->qp_sum / num_mb + 3;
             h264e_hal_dbg(H264E_DBG_DETAIL,
@@ -3440,6 +3446,9 @@ MPP_RET hal_h264e_rkv_wait(void *hal, HalTaskInfo *task)
             fb->qp_sum = new_qp * num_mb;
             h264e_rkv_resend(ctx, 0);
         } else {
+            /* The first and second frame, that is the first I and P frame,
+             * is re-encoded for getting appropriate QP for target bits.
+             */
             h264e_rkv_resend(ctx, 0);
         }
         h264e_rkv_set_feedback(ctx, reg_out, enc_task);

@@ -45,7 +45,8 @@ extern "C" {
 #define HAVE_RKVENC             (0x00010000)
 #define HAVE_VEPU               (0x00020000)
 /* External encoder */
-#define HAVE_H265E              (0x00040000)
+#define HAVE_H265ENC            (0x01000000)
+
 /*
  * Platform image process hardware feature
  */
@@ -59,6 +60,13 @@ extern "C" {
 const char *mpp_get_soc_name(void);
 RK_U32 mpp_get_vcodec_type(void);
 const char *mpp_get_vcodec_dev_name(MppCtxType type, MppCodingType coding, RK_U32 flag);
+
+const char *mpp_get_soc_name(void);
+RK_U32 mpp_get_vcodec_type(void);
+const char *mpp_get_platform_dev_name(MppCtxType type, MppCodingType coding, RK_U32 platform);
+const char *mpp_get_vcodec_dev_name(MppCtxType type, MppCodingType coding);
+
+
 
 RK_U32 mpp_get_2d_hw_flag(void);
 
