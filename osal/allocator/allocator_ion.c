@@ -424,6 +424,10 @@ static MPP_RET allocator_ion_release(void *ctx, MppBufferInfo *data)
     }
     p = (allocator_ctx_ion *)ctx;
 
+    if (data->fd > 0) {
+        close(data->fd);
+        data->fd = -1;
+    }
     if (data->ptr) {
         munmap(data->ptr, data->size);
         data->ptr = NULL;

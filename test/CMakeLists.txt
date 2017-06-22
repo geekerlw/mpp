@@ -12,7 +12,7 @@ macro(add_mpp_test module)
 
     option(${test_tag} "Build mpp ${module} unit test" ON)
     if(${test_tag})
-        add_executable(${test_name} ${test_name}.c)
+        add_executable(${test_name} ${test_name}.c mpp_event_trigger.c mpp_parse_cfg.c)
         target_link_libraries(${test_name} rockchip_mpp utils)
         set_target_properties(${test_name} PROPERTIES FOLDER "test")
         #install(TARGETS ${test_name} RUNTIME DESTINATION ${TEST_INSTALL_DIR})
@@ -37,6 +37,9 @@ add_mpp_test(mpi_enc)
 
 # mpi rc unit test
 add_mpp_test(mpi_rc)
+
+# new mpi rc unit test
+add_mpp_test(mpi_rc2)
 
 macro(add_legacy_test module)
     set(test_name ${module}_test)

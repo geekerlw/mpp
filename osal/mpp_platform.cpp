@@ -283,6 +283,21 @@ RK_U32 mpp_get_vcodec_type(void)
     return vcodec_type;
 }
 
+RK_U32 mpp_get_2d_hw_flag(void)
+{
+    RK_U32 flag = 0;
+
+#ifdef RKPLATFORM
+    if (!access("/dev/rga", F_OK))
+        flag |= HAVE_RGA;
+
+    if (!access("/dev/iep", F_OK))
+        flag |= HAVE_IEP;
+#endif
+
+    return flag;
+}
+
 const char *mpp_get_platform_dev_name(MppCtxType type, MppCodingType coding, RK_U32 platform)
 {
     const char *dev = NULL;
@@ -319,8 +334,6 @@ const char *mpp_get_platform_dev_name(MppCtxType type, MppCodingType coding, RK_
 
     return dev;
 }
-
-
 
 const char *mpp_get_vcodec_dev_name(MppCtxType type, MppCodingType coding)
 {
@@ -447,19 +460,3 @@ const char *mpp_get_vcodec_dev_name(MppCtxType type, MppCodingType coding)
 
     return dev;
 }
-
-RK_U32 mpp_get_2d_hw_flag(void)
-{
-    RK_U32 flag = 0;
-
-#ifdef RKPLATFORM
-    if (!access("/dev/rga", F_OK))
-        flag |= HAVE_RGA;
-
-    if (!access("/dev/iep", F_OK))
-        flag |= HAVE_IEP;
-#endif
-
-    return flag;
-}
-

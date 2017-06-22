@@ -52,15 +52,11 @@ extern "C" {
 #define HAVE_RGA2               (0x00000004)
 #define HAVE_IEP                (0x00000008)
 
-
 const char *mpp_get_soc_name(void);
 RK_U32 mpp_get_vcodec_type(void);
+RK_U32 mpp_get_2d_hw_flag(void);
 const char *mpp_get_platform_dev_name(MppCtxType type, MppCodingType coding, RK_U32 platform);
 const char *mpp_get_vcodec_dev_name(MppCtxType type, MppCodingType coding);
-
-
-
-RK_U32 mpp_get_2d_hw_flag(void);
 
 #ifdef __cplusplus
 }
