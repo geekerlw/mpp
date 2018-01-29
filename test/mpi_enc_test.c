@@ -38,6 +38,7 @@
 
 #define MPI_ENC_TEST_SET_IDR_FRAME  0
 #define MPI_ENC_TEST_SET_OSD        0
+#define MPI_ENC_TEST_SET_ROI        1
 
 typedef struct {
     char            file_input[MAX_FILE_NAME_LENGTH];
@@ -81,6 +82,7 @@ typedef struct {
     MppBuffer md_buf[MPI_ENC_IO_COUNT];
     MppBuffer osd_idx_buf[MPI_ENC_IO_COUNT];
     MppEncOSDPlt osd_plt;
+    MppEncROIRegion roi_region[3]; /* can be more regions */
     MppEncSeiMode sei_mode;
 
     // paramter for resource malloc
@@ -188,7 +190,7 @@ static MPP_RET read_yuv_image(RK_U8 *buf, MpiEncTestData *p)
     } break;
     default : {
         mpp_err_f("read image do not support fmt %d\n", fmt);
-        ret = MPP_NOK;
+        ret = MPP_ERR_VALUE;
     } break;
     }
 
@@ -205,6 +207,7 @@ static MPP_RET fill_yuv_image(RK_U8 *buf, MpiEncTestData *c)
     RK_U32 hor_stride   = c->hor_stride;
     RK_U32 ver_stride   = c->ver_stride;
     MppFrameFormat fmt  = c->fmt;
+
     RK_U32 frame_count  = c->frame_count;
     RK_U8 *buf_y = buf;
     RK_U8 *buf_c = buf + hor_stride * ver_stride;
@@ -745,10 +748,11 @@ MPP_RET test_mpp_run(MpiEncTestData *p)
 
         if (p->fp_input) {
             ret = read_yuv_image(buf, p);
-            if (ret != MPP_OK  || feof(p->fp_input)) {
+            if (ret == MPP_NOK  || feof(p->fp_input)) {
                 mpp_log("found last frame. feof %d\n", feof(p->fp_input));
                 p->frm_eos = 1;
-            }
+            } else if (ret == MPP_ERR_VALUE)
+                goto RET;
         } else {
             ret = fill_yuv_image(buf, p);
             if (ret)
@@ -794,6 +798,34 @@ MPP_RET test_mpp_run(MpiEncTestData *p)
         if (MPP_OK != ret) {
             mpp_err("mpi control enc set osd data failed\n");
             goto RET;
+        }
+#endif
+
+#if MPI_ENC_TEST_SET_ROI
+        if (p->type == MPP_VIDEO_CodingAVC) {
+            MppEncROIRegion *region = p->roi_region;
+            MppEncROICfg roi_cfg;
+
+            /* calculated in pixels */
+            region->x = region->y = 64;
+            region->w = region->h = 128; /* 16-pixel aligned is better */
+            region->intra = 0;   /* flag of forced intra macroblock */
+            region->quality = 20; /* qp of macroblock */
+
+            region++;
+            region->x = region->y = 256;
+            region->w = region->h = 128; /* 16-pixel aligned is better */
+            region->intra = 1;   /* flag of forced intra macroblock */
+            region->quality = 25; /* qp of macroblock */
+
+            roi_cfg.number = 2;
+            roi_cfg.regions = p->roi_region;
+
+            ret = mpi->control(ctx, MPP_ENC_SET_ROI_CFG, &roi_cfg);
+            if (MPP_OK != ret) {
+                mpp_err("mpi control enc set roi data failed\n");
+                goto RET;
+            }
         }
 #endif
 

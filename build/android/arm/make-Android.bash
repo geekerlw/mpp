@@ -11,30 +11,25 @@ fi
 
 rm -rf build lib
 
-CMAKE_PATH=${ANDROID_SDK}/cmake/3.6.3155560/bin
-
-CMAKE=${CMAKE_PATH}/cmake
-MAKE=make
-ANDROID_PLATFORM="android-24"
-
-${CMAKE} \
-	-DCMAKE_BUILD_TYPE=Release \
-	-H../../../ \
-	-B${PWD}/build \
-	-DANDROID_ABI=armeabi-v7a \
-	-DANDROID_ARM_MODE=arm \
-	-DANDROID_ARM_NEON=TRUE \
-	-DANDROID_PLATFORM=${ANDROID_PLATFORM} \
-	-DANDROID_NDK=${ANDROID_NDK} \
-	-DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK}/build/cmake/android.toolchain.cmake \
-	-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=${PWD}/lib \
-	-G"Unix Makefiles" \
-	-DCMAKE_MAKE_PROGRAM=${MAKE} \
-	-DANDROID_ALLOW_UNDEFINED_SYMBOLS=TRUE
+cmake -DCMAKE_TOOLCHAIN_FILE=../android.toolchain.cmake                     \
+      -DCMAKE_BUILD_TYPE=Release                                            \
+      -DANDROID_FORCE_ARM_BUILD=ON                                          \
+      -DANDROID_NDK=${ANDROID_NDK}                                          \
+      -DANDROID_SYSROOT=${PLATFORM}                                         \
+      -DANDROID_ABI="armeabi-v7a with NEON"                                 \
+      -DANDROID_TOOLCHAIN_NAME="arm-linux-androideabi-4.8"                  \
+      -DANDROID_NATIVE_API_LEVEL=android-21                                 \
+      -DANDROID_STL=system                                                  \
+      -DRKPLATFORM=ON                                                       \
+      -DHAVE_DRM=ON                                                         \
+      ../../../
 
 # ----------------------------------------------------------------------------
 # usefull cmake debug flag
 # ----------------------------------------------------------------------------
+      #-DMPP_NAME="rockchip_mpp"                                             \
+      #-DVPU_NAME="rockchip_vpu"                                             \
+      #-DHAVE_DRM                                                            \
       #-DCMAKE_BUILD_TYPE=Debug                                              \
       #-DCMAKE_VERBOSE_MAKEFILE=true                                         \
       #--trace                                                               \

@@ -110,12 +110,12 @@ typedef struct h264e_feedback_t {
     RK_S32 mad_count;
     RK_S32 rlc_count;
     RK_U32 out_strm_size;
+    RK_U32 out_hw_strm_size;
     RK_S64 sse_sum;
 
     /* for VEPU future extansion */
     //TODO: add nal size table feedback
 } h264e_feedback;
-
 
 typedef struct h264e_control_extra_info_cfg_t {
     /* common cfg */
@@ -136,7 +136,6 @@ typedef struct h264e_control_extra_info_cfg_t {
     RK_S32 second_chroma_qp_index_offset;
     RK_S32 pps_id; //TODO: may be removed later, get from sps/pps instead
 } h264e_control_extra_info_cfg;
-
 
 typedef struct h264e_control_extra_info_t {
     RK_U32 size;              // preProcess->lumWidth

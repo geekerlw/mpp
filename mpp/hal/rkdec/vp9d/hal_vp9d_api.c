@@ -102,8 +102,9 @@ static RK_U32 vp9_ver_align(RK_U32 val)
 
 static RK_U32 vp9_hor_align(RK_U32 val)
 {
-    return MPP_ALIGN(val, 128);
+    return MPP_ALIGN(val, 256) | 256;
 }
+
 /*!
 ***********************************************************************
 * \brief
@@ -204,7 +205,11 @@ MPP_RET hal_vp9d_deinit(void *hal)
 {
     MPP_RET ret = MPP_OK;
     hal_vp9_context_t *reg_cxt = (hal_vp9_context_t *)hal;
-
+#ifdef RKPLATFORM
+    if (reg_cxt->vpu_socket >= 0) {
+        mpp_device_deinit(reg_cxt->vpu_socket);
+    }
+#endif
     if (reg_cxt->probe_base) {
         ret = mpp_buffer_put(reg_cxt->probe_base);
         if (MPP_OK != ret) {
@@ -954,9 +959,21 @@ MPP_RET hal_vp9d_flush(void *hal)
 //extern "C"
 MPP_RET hal_vp9d_control(void *hal, RK_S32 cmd_type, void *param)
 {
+    switch ((MpiCmd)cmd_type) {
+    case MPP_DEC_SET_FRAME_INFO: {
+        /* commit buffer stride */
+        RK_U32 width = mpp_frame_get_width((MppFrame)param);
+        RK_U32 height = mpp_frame_get_height((MppFrame)param);
+
+        mpp_frame_set_hor_stride((MppFrame)param, vp9_hor_align(width));
+        mpp_frame_set_ver_stride((MppFrame)param, vp9_ver_align(height));
+
+        break;
+    }
+    default:
+        break;
+    }
     (void)hal;
-    (void)cmd_type;
-    (void)param;
 
     return MPP_OK;
 }

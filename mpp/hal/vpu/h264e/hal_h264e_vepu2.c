@@ -556,12 +556,25 @@ MPP_RET hal_h264e_vepu2_gen_regs(void *hal, HalTaskInfo *task)
     val = VEPU_REG_ZERO_MV_FAVOR_D2(10);
     H264E_HAL_SET_REG(reg, VEPU_REG_MVC_RELATE, val);
 
-    val = VEPU_REG_OUTPUT_SWAP32
-          | VEPU_REG_OUTPUT_SWAP16
-          | VEPU_REG_OUTPUT_SWAP8
-          | VEPU_REG_INPUT_SWAP8
-          | VEPU_REG_INPUT_SWAP16
-          | VEPU_REG_INPUT_SWAP32;
+    if (hw_cfg->input_format < H264E_VPU_CSP_RGB565) {
+        val = VEPU_REG_OUTPUT_SWAP32
+              | VEPU_REG_OUTPUT_SWAP16
+              | VEPU_REG_OUTPUT_SWAP8
+              | VEPU_REG_INPUT_SWAP8
+              | VEPU_REG_INPUT_SWAP16
+              | VEPU_REG_INPUT_SWAP32;
+    } else if (hw_cfg->input_format == H264E_VPU_CSP_ARGB8888) {
+        val = VEPU_REG_OUTPUT_SWAP32
+              | VEPU_REG_OUTPUT_SWAP16
+              | VEPU_REG_OUTPUT_SWAP8
+              | VEPU_REG_INPUT_SWAP32;
+    } else {
+        val = VEPU_REG_OUTPUT_SWAP32
+              | VEPU_REG_OUTPUT_SWAP16
+              | VEPU_REG_OUTPUT_SWAP8
+              | VEPU_REG_INPUT_SWAP16
+              | VEPU_REG_INPUT_SWAP32;
+    }
     H264E_HAL_SET_REG(reg, VEPU_REG_DATA_ENDIAN, val);
 
     val = VEPU_REG_PPS_ID(pps->i_id)
@@ -829,7 +842,7 @@ MPP_RET hal_h264e_vepu2_control(void *hal, RK_S32 cmd_type, void *param)
         if (change & MPP_ENC_PREP_CFG_CHANGE_INPUT) {
             if ((set->width < 0 || set->width > 1920) ||
                 (set->height < 0 || set->height > 3840) ||
-                (set->hor_stride < 0 || set->hor_stride > 1920) ||
+                (set->hor_stride < 0 || set->hor_stride > 3840) ||
                 (set->ver_stride < 0 || set->ver_stride > 3840)) {
                 mpp_err("invalid input w:h [%d:%d] [%d:%d]\n",
                         set->width, set->height,
@@ -913,10 +926,15 @@ MPP_RET hal_h264e_vepu2_control(void *hal, RK_S32 cmd_type, void *param)
 
     case MPP_ENC_SET_OSD_PLT_CFG:
     case MPP_ENC_SET_OSD_DATA_CFG: {
+        mpp_err("hw vpu2 don't support osd cfg.\n");
+        return MPP_NOK;
         break;
     }
     case MPP_ENC_SET_SEI_CFG: {
         ctx->sei_mode = *((MppEncSeiMode *)param);
+        break;
+    }
+    case MPP_ENC_SET_ROI_CFG: {
         break;
     }
     default : {

@@ -871,6 +871,12 @@ static MPP_RET jpegd_decode_frame(JpegdCtx *ctx)
                 ret = MPP_ERR_UNKNOW;
                 goto fail;
             }
+
+            if (!ctx->scan_all_marker) {
+                jpegd_dbg_marker("just scan parts of markers!\n");
+                goto done;
+            }
+
             break;
         case DRI:
             if ((ret = jpegd_decode_dri(ctx)) != MPP_OK) {
@@ -1024,7 +1030,7 @@ jpegd_handle_stream(RK_U8 *src, RK_U32 src_size,
     return ret;
 }
 
-MPP_RET jpegd_prepare(void *ctx, MppPacket pkt, HalDecTask *task)
+static MPP_RET jpegd_prepare(void *ctx, MppPacket pkt, HalDecTask *task)
 {
     jpegd_dbg_func("enter\n");
     MPP_RET ret = MPP_OK;
@@ -1157,7 +1163,8 @@ static MPP_RET jpegd_allocate_frame(JpegdCtx *ctx)
         mpp_slots_set_prop(slots, SLOTS_NUMERATOR, &value);
         value = 1;
         mpp_slots_set_prop(slots, SLOTS_DENOMINATOR, &value);
-        mpp_buf_slot_set_prop(slots, slot_idx, SLOT_FRAME, output);
+        if (mpp_buf_slot_set_prop(slots, slot_idx, SLOT_FRAME, output))
+            return MPP_ERR_VALUE;
         mpp_buf_slot_set_flag(slots, slot_idx, SLOT_CODEC_USE);
         mpp_buf_slot_set_flag(slots, slot_idx, SLOT_HAL_OUTPUT);
     }
@@ -1166,7 +1173,7 @@ static MPP_RET jpegd_allocate_frame(JpegdCtx *ctx)
     return MPP_OK;
 }
 
-MPP_RET jpegd_update_frame(JpegdCtx *ctx)
+static MPP_RET jpegd_update_frame(JpegdCtx *ctx)
 {
     jpegd_dbg_func("enter\n");
 
@@ -1178,7 +1185,7 @@ MPP_RET jpegd_update_frame(JpegdCtx *ctx)
     return MPP_OK;
 }
 
-MPP_RET jpegd_parse(void *ctx, HalDecTask *task)
+static MPP_RET jpegd_parse(void *ctx, HalDecTask *task)
 {
     jpegd_dbg_func("enter\n");
     MPP_RET ret = MPP_OK;
@@ -1190,7 +1197,8 @@ MPP_RET jpegd_parse(void *ctx, HalDecTask *task)
 
     ret = jpegd_decode_frame(JpegCtx);
     if (MPP_OK == ret) {
-        jpegd_allocate_frame(JpegCtx);
+        if (jpegd_allocate_frame(JpegCtx))
+            return MPP_ERR_VALUE;
 
         task->syntax.data = (void *)JpegCtx->syntax;
         task->syntax.number = sizeof(JpegdSyntax);
@@ -1204,7 +1212,7 @@ MPP_RET jpegd_parse(void *ctx, HalDecTask *task)
     return ret;
 }
 
-MPP_RET jpegd_deinit(void *ctx)
+static MPP_RET jpegd_deinit(void *ctx)
 {
     jpegd_dbg_func("enter\n");
     JpegdCtx *JpegCtx = (JpegdCtx *)ctx;
@@ -1245,7 +1253,7 @@ MPP_RET jpegd_deinit(void *ctx)
     return 0;
 }
 
-MPP_RET jpegd_init(void *ctx, ParserCfg *parser_cfg)
+static MPP_RET jpegd_init(void *ctx, ParserCfg *parser_cfg)
 {
     jpegd_dbg_func("enter\n");
     JpegdCtx *JpegCtx = (JpegdCtx *)ctx;
@@ -1261,10 +1269,14 @@ MPP_RET jpegd_init(void *ctx, ParserCfg *parser_cfg)
     const char* soc_name = NULL;
     soc_name = mpp_get_soc_name();
     if (soc_name && strstr(soc_name, "1108")) {
-        /* rv1108: no need to copy stream when decoding jpeg */
+        /* rv1108: no need to copy stream when decoding jpeg;
+         *         just scan parts of markers to reduce CPU's occupancy
+         */
         JpegCtx->copy_flag = 0;
+        JpegCtx->scan_all_marker = 0;
     } else {
         JpegCtx->copy_flag = 1;
+        JpegCtx->scan_all_marker = 1;
     }
 
     JpegCtx->frame_slots = parser_cfg->frame_slots;
@@ -1313,7 +1325,7 @@ MPP_RET jpegd_init(void *ctx, ParserCfg *parser_cfg)
     return MPP_OK;
 }
 
-MPP_RET jpegd_flush(void *ctx)
+static MPP_RET jpegd_flush(void *ctx)
 {
     jpegd_dbg_func("enter\n");
     JpegdCtx *JpegCtx = (JpegdCtx *)ctx;
@@ -1322,7 +1334,7 @@ MPP_RET jpegd_flush(void *ctx)
     return MPP_OK;
 }
 
-MPP_RET jpegd_reset(void *ctx)
+static MPP_RET jpegd_reset(void *ctx)
 {
     jpegd_dbg_func("enter\n");
     JpegdCtx *JpegCtx = (JpegdCtx *)ctx;
@@ -1333,7 +1345,7 @@ MPP_RET jpegd_reset(void *ctx)
     return MPP_OK;
 }
 
-MPP_RET jpegd_control(void *ctx, RK_S32 cmd, void *param)
+static MPP_RET jpegd_control(void *ctx, RK_S32 cmd, void *param)
 {
     jpegd_dbg_func("enter\n");
     MPP_RET ret = MPP_OK;
@@ -1355,7 +1367,7 @@ MPP_RET jpegd_control(void *ctx, RK_S32 cmd, void *param)
     return ret;
 }
 
-MPP_RET jpegd_callback(void *ctx, void *err_info)
+static MPP_RET jpegd_callback(void *ctx, void *err_info)
 {
     jpegd_dbg_func("enter\n");
     (void) ctx;
@@ -1365,18 +1377,18 @@ MPP_RET jpegd_callback(void *ctx, void *err_info)
 }
 
 const ParserApi api_jpegd_parser = {
-    "jpegd_parse",
-    MPP_VIDEO_CodingMJPEG,
-    sizeof(JpegdCtx),
-    0,
-    jpegd_init,
-    jpegd_deinit,
-    jpegd_prepare,
-    jpegd_parse,
-    jpegd_reset,
-    jpegd_flush,
-    jpegd_control,
-    jpegd_callback,
+    .name = "jpegd_parse",
+    .coding = MPP_VIDEO_CodingMJPEG,
+    .ctx_size = sizeof(JpegdCtx),
+    .flag = 0,
+    .init = jpegd_init,
+    .deinit = jpegd_deinit,
+    .prepare = jpegd_prepare,
+    .parse = jpegd_parse,
+    .reset = jpegd_reset,
+    .flush = jpegd_flush,
+    .control = jpegd_control,
+    .callback = jpegd_callback,
 };
 
 

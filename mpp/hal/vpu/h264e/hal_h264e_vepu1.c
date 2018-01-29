@@ -598,7 +598,7 @@ MPP_RET hal_h264e_vepu1_control(void *hal, RK_S32 cmd_type, void *param)
         if (change & MPP_ENC_PREP_CFG_CHANGE_INPUT) {
             if ((set->width < 0 || set->width > 1920) ||
                 (set->height < 0 || set->height > 3840) ||
-                (set->hor_stride < 0 || set->hor_stride > 1920) ||
+                (set->hor_stride < 0 || set->hor_stride > 3840) ||
                 (set->ver_stride < 0 || set->ver_stride > 3840)) {
                 mpp_err("invalid input w:h [%d:%d] [%d:%d]\n",
                         set->width, set->height,
@@ -684,10 +684,15 @@ MPP_RET hal_h264e_vepu1_control(void *hal, RK_S32 cmd_type, void *param)
     }
     case MPP_ENC_SET_OSD_PLT_CFG:
     case MPP_ENC_SET_OSD_DATA_CFG: {
+        mpp_err("hw vpu1 don't support osd cfg.\n");
+        return MPP_NOK;
         break;
     }
     case MPP_ENC_SET_SEI_CFG: {
         ctx->sei_mode = *((MppEncSeiMode *)param);
+        break;
+    }
+    case MPP_ENC_SET_ROI_CFG: {
         break;
     }
     default : {

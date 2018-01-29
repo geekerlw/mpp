@@ -376,26 +376,27 @@ __FAILED:
     return ret;
 }
 
-static RK_U32 rkv_len_align_422(RK_U32 val)
+static inline RK_U32 rkv_len_align_422(RK_U32 val)
 {
     return ((5 * MPP_ALIGN(val, 16)) / 2);
 }
 
-static MPP_RET dpb_mark_malloc(H264dVideoCtx_t *p_Vid,  H264_StorePic_t *dec_pic)
+static MPP_RET dpb_mark_malloc(H264dVideoCtx_t *p_Vid, H264_StorePic_t *dec_pic)
 {
-    RK_U8 idx = 0;
     MPP_RET ret = MPP_ERR_UNKNOW;
     H264_DpbMark_t *cur_mark = NULL;
-    RK_U32 hor_stride = 0, ver_stride = 0;
     H264_DecCtx_t *p_Dec = p_Vid->p_Dec;
     H264_DpbMark_t *p_mark = p_Vid->p_Dec->dpb_mark;
     RK_S32 structure = dec_pic->structure;
     RK_S32 layer_id = dec_pic->layer_id;
+
     if (!dec_pic->combine_flag) {
-        while (p_mark[idx].out_flag || p_mark[idx].top_used || p_mark[idx].bot_used) {
+        RK_U8 idx = 0;
+        while (p_mark[idx].out_flag || p_mark[idx].top_used
+               || p_mark[idx].bot_used) {
             idx++;
+            ASSERT(MAX_MARK_SIZE > idx);
         }
-        ASSERT(idx <= MAX_MARK_SIZE);
 
         mpp_buf_slot_get_unused(p_Vid->p_Dec->frame_slots, &p_mark[idx].slot_idx);
         if (p_mark[idx].slot_idx < 0) {
@@ -408,6 +409,8 @@ static MPP_RET dpb_mark_malloc(H264dVideoCtx_t *p_Vid,  H264_StorePic_t *dec_pic
         cur_mark->out_flag = 1;
         {
             MppFrame mframe = NULL;
+            RK_U32 hor_stride, ver_stride;
+
             mpp_frame_init(&mframe);
             if ((YUV420 == p_Vid->yuv_format) && (8 == p_Vid->bit_depth_luma)) {
                 mpp_frame_set_fmt(mframe, MPP_FMT_YUV420SP);
@@ -420,23 +423,44 @@ static MPP_RET dpb_mark_malloc(H264dVideoCtx_t *p_Vid,  H264_StorePic_t *dec_pic
                 mpp_frame_set_fmt(mframe, MPP_FMT_YUV422SP_10BIT);
                 mpp_slots_set_prop(p_Dec->frame_slots, SLOTS_LEN_ALIGN, rkv_len_align_422);
             }
-            hor_stride = ((p_Vid->width * p_Vid->bit_depth_luma + 7) & (~7)) / 8;
+            hor_stride = MPP_ALIGN(p_Vid->width * p_Vid->bit_depth_luma, 8) / 8;
             ver_stride = p_Vid->height;
-            mpp_frame_set_hor_stride(mframe, hor_stride);  // before crop
+            /* Before cropping */
+            mpp_frame_set_hor_stride(mframe, hor_stride);
             mpp_frame_set_ver_stride(mframe, ver_stride);
-            mpp_frame_set_width(mframe, p_Vid->width_after_crop);  // after crop
+            /* After cropped */
+            mpp_frame_set_width(mframe, p_Vid->width_after_crop);
             mpp_frame_set_height(mframe, p_Vid->height_after_crop);
             mpp_frame_set_pts(mframe, p_Vid->p_Cur->last_pts);
             mpp_frame_set_dts(mframe, p_Vid->p_Cur->last_dts);
 
+            /* Setting the interlace mode for the picture */
+            switch (structure) {
+            case FRAME:
+                mpp_frame_set_mode(mframe, MPP_FRAME_FLAG_FRAME);
+                break;
+            case TOP_FIELD:
+                mpp_frame_set_mode(mframe, MPP_FRAME_FLAG_PAIRED_FIELD
+                                   | MPP_FRAME_FLAG_TOP_FIRST);
+                break;
+            case BOTTOM_FIELD:
+                mpp_frame_set_mode(mframe, MPP_FRAME_FLAG_PAIRED_FIELD
+                                   | MPP_FRAME_FLAG_BOT_FIRST);
+                break;
+            default:
+                H264D_DBG(H264D_DBG_FIELD_PAIRED, "Unknown interlace mode");
+                mpp_assert(0);
+            }
+
             //!< set display parameter
             if (p_Vid->active_sps->vui_parameters_present_flag) {
                 H264_VUI_t *p = &p_Vid->active_sps->vui_seq_parameters;
-                if (p->video_signal_type_present_flag && p->video_full_range_flag) {
+
+                if (p->video_signal_type_present_flag && p->video_full_range_flag)
                     mpp_frame_set_color_range(mframe, MPP_FRAME_RANGE_JPEG);
-                } else {
+                else
                     mpp_frame_set_color_range(mframe, MPP_FRAME_RANGE_MPEG);
-                }
+
                 if (p->colour_description_present_flag) {
                     mpp_frame_set_color_primaries(mframe, p->colour_primaries);
                     mpp_frame_set_color_trc(mframe, p->transfer_characteristics);
@@ -461,8 +485,11 @@ static MPP_RET dpb_mark_malloc(H264dVideoCtx_t *p_Vid,  H264_StorePic_t *dec_pic
     if (structure == FRAME || structure == BOTTOM_FIELD) {
         cur_mark->bot_used += 1;
     }
-    H264D_DBG(H264D_DBG_DPB_MALLIC, "[DPB_malloc] g_framecnt=%d, com_flag=%d, mark_idx=%d, slot_idx=%d, slice_type=%d, struct=%d, lay_id=%d\n",
-              p_Vid->g_framecnt, dec_pic->combine_flag, cur_mark->mark_idx, cur_mark->slot_idx, dec_pic->slice_type, dec_pic->structure, layer_id);
+    H264D_DBG(H264D_DBG_DPB_MALLIC,
+              "[DPB_malloc] g_framecnt=%d, com_flag=%d, mark_idx=%d, slot_idx=%d, slice_type=%d, struct=%d, lay_id=%d\n",
+              p_Vid->g_framecnt, dec_pic->combine_flag, cur_mark->mark_idx,
+              cur_mark->slot_idx, dec_pic->slice_type, dec_pic->structure,
+              layer_id);
 
     p_Vid->p_Dec->in_task->output = cur_mark->slot_idx;
     mpp_buf_slot_set_flag(p_Dec->frame_slots, cur_mark->slot_idx, SLOT_HAL_OUTPUT);
@@ -474,33 +501,6 @@ static MPP_RET dpb_mark_malloc(H264dVideoCtx_t *p_Vid,  H264_StorePic_t *dec_pic
 __FAILED:
     dec_pic->mem_mark = NULL;
     return ret;
-}
-static MPP_RET check_dpb_field_paired(H264_FrameStore_t *p_last, H264_StorePic_t *dec_pic, RK_S32 last_pic_structure)
-{
-    MPP_RET ret = MPP_ERR_UNKNOW;
-#if 0
-    RK_S32 cur_structure = dec_pic->structure;
-    //!< check illegal field paired
-    if (p_last && (cur_structure == TOP_FIELD || cur_structure == BOTTOM_FIELD)) {
-
-        if ((p_last->is_used == 1 && cur_structure == TOP_FIELD)  //!< Top +Top
-            || (p_last->is_used == 2 && cur_structure == BOTTOM_FIELD) //!< Bot + Bot
-            //|| ((!dec_pic->combine_flag) && p_last->is_used == 2 && cur_structure == TOP_FIELD) //!< Bot + Top + not combine
-            || ((!dec_pic->combine_flag) && p_last->is_used == 1 && cur_structure == BOTTOM_FIELD) //!< Top + Bot + not combine
-           ) {
-            H264D_WARNNING("[check_field_paired] (discard) combine_flag=%d, last_used=%d, curr_struct=%d",
-                           dec_pic->combine_flag, p_last->is_used, cur_structure);
-            return ret = MPP_NOK;
-        }
-    }
-    H264D_DBG(H264D_DBG_FIELD_PAIRED, "[check_field_paired] combine_flag=%d, last_used=%d, last_pic_struct=%d, curr_struct=%d",
-              dec_pic->combine_flag, (p_last ? p_last->is_used : -1), last_pic_structure, cur_structure);
-#else
-    (void)p_last;
-    (void)dec_pic;
-    (void)last_pic_structure;
-#endif
-    return ret = MPP_OK;
 }
 
 static MPP_RET check_dpb_discontinuous(H264_StorePic_t *p_last, H264_StorePic_t *dec_pic, H264_SLICE_t *currSlice)
@@ -613,8 +613,8 @@ static MPP_RET alloc_decpic(H264_SLICE_t *currSlice)
     dec_pic->width_after_crop = p_Vid->width_after_crop;
     dec_pic->height_after_crop = p_Vid->height_after_crop;
     dec_pic->combine_flag = get_filed_dpb_combine_flag(p_Dpb->last_picture, dec_pic);
-    FUN_CHECK(ret = dpb_mark_malloc(p_Vid, dec_pic)); //!< malloc dpb_memory
-    FUN_CHECK(ret = check_dpb_field_paired(p_Dpb->last_picture, dec_pic, p_Vid->last_pic_structure));
+    /* malloc dpb_memory */
+    FUN_CHECK(ret = dpb_mark_malloc(p_Vid, dec_pic));
     FUN_CHECK(ret = check_dpb_discontinuous(p_Vid->last_pic, dec_pic, currSlice));
     dec_pic->mem_malloc_type = Mem_Malloc;
     dec_pic->colmv_no_used_flag = 0;
@@ -1340,7 +1340,7 @@ static RK_U32 check_ref_pic_list(H264_SLICE_t *currSlice, RK_S32 cur_list)
         currPicNum = 2 * currSlice->frame_num + 1;
     }
     picNumLXPred = currPicNum;
-    for (i = 0; modification_of_pic_nums_idc[i] != 3; i++) {
+    for (i = 0; modification_of_pic_nums_idc[i] != 3 && i < MAX_REORDER_TIMES; i++) {
         H264_StorePic_t *tmp = NULL;
         RK_U32 error_flag = 0;
         if (modification_of_pic_nums_idc[i] > 3)

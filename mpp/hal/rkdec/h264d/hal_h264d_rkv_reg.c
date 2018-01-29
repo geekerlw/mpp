@@ -24,7 +24,6 @@
 #include "rk_type.h"
 #include "mpp_err.h"
 #include "mpp_mem.h"
-#include "mpp_time.h"
 #include "mpp_common.h"
 #include "mpp_bitput.h"
 
@@ -625,9 +624,6 @@ MPP_RET rkv_h264d_gen_regs(void *hal, HalTaskInfo *task)
 
     strm_offset += RKV_SCALING_LIST_SIZE;
     p_regs->sw75.errorinfo_base = hw_base + (strm_offset << 10);
-
-
-    ((HalDecTask*)&task->dec)->valid = 0;
 
 __RETURN:
     return ret = MPP_OK;

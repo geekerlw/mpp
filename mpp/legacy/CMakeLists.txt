@@ -18,36 +18,32 @@ set (MPP_LEGACY_SRC
     ../mpp_info.cpp
     )
 
-set(LIBROCKCHIP_VPU_VERSION "0")
-set(LIBROCKCHIP_VPU_ABI_VERSION "1")
+set(VPU_VERSION "0")
+set(VPU_ABI_VERSION "1")
 
-add_library(rockchip_vpu_static STATIC ${MPP_LEGACY_SRC})
-set_target_properties(rockchip_vpu_static PROPERTIES FOLDER "mpp/legacy")
-target_link_libraries(rockchip_vpu_static rockchip_mpp_static)
+add_library(${VPU_STATIC} STATIC ${MPP_LEGACY_SRC})
+set_target_properties(${VPU_STATIC} PROPERTIES FOLDER "mpp/legacy")
+target_link_libraries(${VPU_STATIC} ${MPP_STATIC})
 
-add_library(rockchip_vpu SHARED ${MPP_LEGACY_SRC})
-set_target_properties(rockchip_vpu PROPERTIES FOLDER "mpp/legacy")
-set_target_properties(rockchip_vpu PROPERTIES CLEAN_DIRECT_OUTPUT 1)
-set_target_properties(rockchip_vpu PROPERTIES C_VISIBILITY_PRESET default)
-set_target_properties(rockchip_vpu PROPERTIES CXX_VISIBILITY_PRESET default)
+add_library(${VPU_SHARED} SHARED ${MPP_LEGACY_SRC})
+set_target_properties(${VPU_SHARED} PROPERTIES FOLDER "mpp/legacy")
+set_target_properties(${VPU_SHARED} PROPERTIES CLEAN_DIRECT_OUTPUT 1)
+set_target_properties(${VPU_SHARED} PROPERTIES C_VISIBILITY_PRESET default)
+set_target_properties(${VPU_SHARED} PROPERTIES CXX_VISIBILITY_PRESET default)
 
-if(RKPLATFORM)
-    target_link_libraries(rockchip_vpu rockchip_mpp dl)
-else()
-    target_link_libraries(rockchip_vpu rockchip_mpp dl)
+# NOTE: due to legacy libray naming issue we can not support version on Android
+if (NOT ANDROID)
+set_target_properties(${VPU_SHARED} PROPERTIES VERSION ${MPP_VERSION})
+set_target_properties(${VPU_SHARED} PROPERTIES SOVERSION ${MPP_ABI_VERSION})
 endif()
 
-target_include_directories(rockchip_vpu PUBLIC
-${CMAKE_CURRENT_SOURCE_DIR}
-)
+if(RKPLATFORM)
+    target_link_libraries(${VPU_SHARED} dl ${MPP_SHARED})
+else()
+    target_link_libraries(${VPU_SHARED} ${MPP_SHARED})
+endif()
 
-target_include_directories(rockchip_vpu_static PUBLIC
-${CMAKE_CURRENT_SOURCE_DIR}
-)
-
-set_target_properties(rockchip_vpu PROPERTIES VERSION
-${LIBROCKCHIP_VPU_VERSION}
-SOVERSION ${LIBROCKCHIP_VPU_ABI_VERSION})
-
-install(TARGETS rockchip_vpu LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
-install(TARGETS rockchip_vpu_static ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+install(TARGETS ${VPU_STATIC} ${VPU_SHARED}
+        ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        )

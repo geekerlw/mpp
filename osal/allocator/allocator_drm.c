@@ -44,6 +44,37 @@ static RK_U32 drm_debug = 0;
 
 #define drm_dbg(flag, fmt, ...) _mpp_dbg_f(drm_debug, flag, fmt, ## __VA_ARGS__)
 
+#if defined(ANDROID) && !defined(__LP64__)
+#include <errno.h> /* for EINVAL */
+
+extern void *__mmap2(void *, size_t, int, int, int, size_t);
+
+static inline void *drm_mmap(void *addr, size_t length, int prot, int flags,
+                             int fd, loff_t offset)
+{
+    /* offset must be aligned to 4096 (not necessarily the page size) */
+    if (offset & 4095) {
+        errno = EINVAL;
+        return MAP_FAILED;
+    }
+
+    return __mmap2(addr, length, prot, flags, fd, (size_t) (offset >> 12));
+}
+
+#  define drm_munmap(addr, length) \
+              munmap(addr, length)
+
+#else
+
+/* assume large file support exists */
+#  define drm_mmap(addr, length, prot, flags, fd, offset) \
+              mmap(addr, length, prot, flags, fd, offset)
+
+#  define drm_munmap(addr, length) \
+              munmap(addr, length)
+
+#endif
+
 typedef struct {
     RK_U32  alignment;
     RK_S32  drm_device;
@@ -65,31 +96,6 @@ static int drm_ioctl(int fd, int req, void *arg)
     return ret;
 }
 
-static void* drm_mmap(int fd, size_t len, int prot, int flags, loff_t offset)
-{
-    static unsigned long pagesize_mask = 0;
-#if !defined(__gnu_linux__)
-    func_mmap64 fp_mmap64 = mpp_rt_get_mmap64();
-#endif
-
-    if (fd < 0)
-        return NULL;
-
-    if (!pagesize_mask)
-        pagesize_mask = sysconf(_SC_PAGESIZE) - 1;
-
-    offset = (offset + pagesize_mask) & ~pagesize_mask;
-
-#if !defined(__gnu_linux__)
-    if (fp_mmap64)
-        return fp_mmap64(NULL, len, prot, flags, fd, offset);
-
-    return NULL;
-#else
-    return mmap(NULL, len, prot, flags, fd, offset);
-#endif
-}
-
 static int drm_handle_to_fd(int fd, RK_U32 handle, int *map_fd, RK_U32 flags)
 {
     int ret;
@@ -103,9 +109,8 @@ static int drm_handle_to_fd(int fd, RK_U32 handle, int *map_fd, RK_U32 flags)
         return -EINVAL;
 
     ret = drm_ioctl(fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &dph);
-    if (ret < 0) {
+    if (ret < 0)
         return ret;
-    }
 
     *map_fd = dph.fd;
 
@@ -133,44 +138,8 @@ static int drm_fd_to_handle(int fd, int map_fd, RK_U32 *handle, RK_U32 flags)
     }
 
     *handle = dph.handle;
+
     drm_dbg(DRM_FUNCTION, "get handle %d", *handle);
-
-    return ret;
-}
-
-static int drm_map(int fd, RK_U32 handle, size_t length, int prot,
-                   int flags, unsigned char **ptr, int *map_fd)
-{
-    int ret;
-    struct drm_mode_map_dumb dmmd;
-    memset(&dmmd, 0, sizeof(dmmd));
-    dmmd.handle = handle;
-
-    if (map_fd == NULL)
-        return -EINVAL;
-    if (ptr == NULL)
-        return -EINVAL;
-
-    ret = drm_handle_to_fd(fd, handle, map_fd, 0);
-    drm_dbg(DRM_FUNCTION, "drm_map fd %d", *map_fd);
-    if (ret < 0)
-        return ret;
-
-    ret = drm_ioctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &dmmd);
-    if (ret < 0) {
-        close(*map_fd);
-        return ret;
-    }
-
-    drm_dbg(DRM_FUNCTION, "dev fd %d length %d", fd, length);
-
-    *ptr = drm_mmap(fd, length, prot, flags, dmmd.offset);
-    if (*ptr == MAP_FAILED) {
-        close(*map_fd);
-        *map_fd = -1;
-        mpp_err("mmap failed: %s\n", strerror(errno));
-        return -errno;
-    }
 
     return ret;
 }
@@ -186,9 +155,6 @@ static int drm_alloc(int fd, size_t len, size_t align, RK_U32 *handle)
     dmcb.bpp = 8;
     dmcb.width = (len + align - 1) & (~(align - 1));
     dmcb.height = 1;
-    dmcb.size = dmcb.width * dmcb.bpp;
-
-    drm_dbg(DRM_FUNCTION, "fd %d aligned %d size %lld\n", fd, align, dmcb.size);
 
     if (handle == NULL)
         return -EINVAL;
@@ -196,6 +162,8 @@ static int drm_alloc(int fd, size_t len, size_t align, RK_U32 *handle)
     ret = drm_ioctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, &dmcb);
     if (ret < 0)
         return ret;
+
+    drm_dbg(DRM_FUNCTION, "fd %d aligned %d size %lld\n", fd, align, dmcb.size);
     *handle = dmcb.handle;
 
     drm_dbg(DRM_FUNCTION, "get handle %d size %d", *handle, dmcb.size);
@@ -219,7 +187,7 @@ static MPP_RET os_allocator_drm_open(void **ctx, size_t alignment)
     drm_dbg(DRM_FUNCTION, "enter");
 
     if (NULL == ctx) {
-        mpp_err("os_allocator_open Android do not accept NULL input\n");
+        mpp_err("os_allocator_open does not accept NULL input\n");
         return MPP_ERR_NULL_PTR;
     }
 
@@ -238,7 +206,7 @@ static MPP_RET os_allocator_drm_open(void **ctx, size_t alignment)
     p = mpp_malloc(allocator_ctx_drm, 1);
     if (NULL == p) {
         close(fd);
-        mpp_err("os_allocator_open Android failed to allocate context\n");
+        mpp_err("os_allocator_open failed to allocate context\n");
         return MPP_ERR_MALLOC;
     } else {
         /*
@@ -260,7 +228,7 @@ static MPP_RET os_allocator_drm_alloc(void *ctx, MppBufferInfo *info)
     allocator_ctx_drm *p = NULL;
 
     if (NULL == ctx) {
-        mpp_err("os_allocator_close Android do not accept NULL input\n");
+        mpp_err("os_allocator_alloc does not accept NULL input\n");
         return MPP_ERR_NULL_PTR;
     }
 
@@ -273,13 +241,14 @@ static MPP_RET os_allocator_drm_alloc(void *ctx, MppBufferInfo *info)
         return ret;
     }
     drm_dbg(DRM_FUNCTION, "handle %d", (RK_U32)((intptr_t)info->hnd));
-    ret = drm_map(p->drm_device, (RK_U32)((intptr_t)info->hnd), info->size,
-                  PROT_READ | PROT_WRITE, MAP_SHARED,
-                  (unsigned char **)&info->ptr, &info->fd);
+    ret = drm_handle_to_fd(p->drm_device, (RK_U32)((intptr_t)info->hnd),
+                           &info->fd, 0);
+
     if (ret) {
-        mpp_err("os_allocator_drm_alloc drm_map failed ret %d\n", ret);
+        mpp_err("os_allocator_drm_alloc handle_to_fd failed ret %d\n", ret);
         return ret;
     }
+    info->ptr = NULL;
     return ret;
 }
 
@@ -291,52 +260,18 @@ static MPP_RET os_allocator_drm_import(void *ctx, MppBufferInfo *data)
     memset(&dmmd, 0, sizeof(dmmd));
 
     drm_dbg(DRM_FUNCTION, "enter");
-    // NOTE: do not use the original buffer fd,
-    //       use dup fd to avoid unexpected external fd close
-    data->fd = dup(data->fd);
 
     ret = drm_fd_to_handle(p->drm_device, data->fd, (RK_U32 *)&data->hnd, 0);
 
-    drm_dbg(DRM_FUNCTION, "get handle %d", (RK_U32)(data->hnd));
+    drm_dbg(DRM_FUNCTION, "get handle %d", (intptr_t)(data->hnd));
 
-    dmmd.handle = (RK_U32)(data->hnd);
+    ret = drm_handle_to_fd(p->drm_device, (RK_U32)((intptr_t)data->hnd),
+                           &data->fd, 0);
 
-    ret = drm_ioctl(p->drm_device, DRM_IOCTL_MODE_MAP_DUMB, &dmmd);
-    if (ret < 0)
-        return ret;
-
-    drm_dbg(DRM_FUNCTION, "dev fd %d length %d", p->drm_device, data->size);
-
-    data->ptr = drm_mmap(p->drm_device, data->size, PROT_READ | PROT_WRITE,
-                         MAP_SHARED, dmmd.offset);
-    if (data->ptr == MAP_FAILED) {
-        mpp_err("mmap failed: %s\n", strerror(errno));
-        return -errno;
-    }
-
+    data->ptr = NULL;
     drm_dbg(DRM_FUNCTION, "leave");
 
     return ret;
-}
-
-static MPP_RET os_allocator_drm_release(void *ctx, MppBufferInfo *data)
-{
-    allocator_ctx_drm *p = NULL;
-
-    if (NULL == ctx) {
-        drm_dbg(DRM_FUNCTION, "invalid ctx");
-        return MPP_ERR_NULL_PTR;
-    }
-    p = (allocator_ctx_drm *)ctx;
-
-    if (data->ptr) {
-        munmap(data->ptr, data->size);
-        data->ptr = NULL;
-    }
-
-    drm_free(p->drm_device, (RK_U32)((intptr_t)data->hnd));
-
-    return MPP_OK;
 }
 
 static MPP_RET os_allocator_drm_free(void *ctx, MppBufferInfo *data)
@@ -350,15 +285,12 @@ static MPP_RET os_allocator_drm_free(void *ctx, MppBufferInfo *data)
     p = (allocator_ctx_drm *)ctx;
 
     if (data->ptr) {
-        munmap(data->ptr, data->size);
+        drm_munmap(data->ptr, data->size);
         data->ptr = NULL;
     }
-
-    drm_free(p->drm_device, (RK_U32)((intptr_t)data->hnd));
-    /* Not necessary here */
     close(data->fd);
 
-    return MPP_OK;
+    return drm_free(p->drm_device, (RK_U32)((intptr_t)data->hnd));
 }
 
 static MPP_RET os_allocator_drm_close(void *ctx)
@@ -367,17 +299,56 @@ static MPP_RET os_allocator_drm_close(void *ctx)
     allocator_ctx_drm *p;
 
     if (NULL == ctx) {
-        mpp_err("os_allocator_close Android do not accept NULL input\n");
+        mpp_err("os_allocator_close doesn't accept NULL input\n");
         return MPP_ERR_NULL_PTR;
     }
 
     p = (allocator_ctx_drm *)ctx;
     drm_dbg(DRM_FUNCTION, "close fd %d", p->drm_device);
+
     ret = close(p->drm_device);
     mpp_free(p);
     if (ret < 0)
         return (MPP_RET) - errno;
+
     return MPP_OK;
+}
+
+static MPP_RET os_allocator_drm_mmap(void *ctx, MppBufferInfo *data)
+{
+    allocator_ctx_drm *p;
+    MPP_RET ret = MPP_OK;
+    if (NULL == ctx) {
+        mpp_err("os_allocator_close do not accept NULL input\n");
+        return MPP_ERR_NULL_PTR;
+    }
+    p = (allocator_ctx_drm *)ctx;
+
+    if (NULL == ctx)
+        return MPP_ERR_NULL_PTR;
+
+    if (NULL == data->ptr) {
+        struct drm_mode_map_dumb dmmd;
+
+        memset(&dmmd, 0, sizeof(dmmd));
+        dmmd.handle = (RK_U32)(intptr_t)data->hnd;
+
+        ret = drm_ioctl(p->drm_device, DRM_IOCTL_MODE_MAP_DUMB, &dmmd);
+        if (ret) {
+            mpp_err("map_dumb failed: %s\n", strerror(ret));
+            return ret;
+        }
+
+        data->ptr = drm_mmap(NULL, data->size, PROT_READ | PROT_WRITE,
+                             MAP_SHARED, p->drm_device, dmmd.offset);
+        if (data->ptr == MAP_FAILED) {
+            mpp_err("mmap failed: %s\n", strerror(errno));
+            data->ptr = NULL;
+            return -errno;
+        }
+    }
+
+    return ret;
 }
 
 os_allocator allocator_drm = {
@@ -386,6 +357,6 @@ os_allocator allocator_drm = {
     .alloc = os_allocator_drm_alloc,
     .free = os_allocator_drm_free,
     .import = os_allocator_drm_import,
-    .release = os_allocator_drm_release,
-    .mmap = NULL,
+    .release = os_allocator_drm_free,
+    .mmap = os_allocator_drm_mmap,
 };

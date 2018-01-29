@@ -11,6 +11,9 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
 if (HAVE_DRM)
     add_definitions(-DHAVE_DRM)
     set(DRM_FILES allocator/allocator_drm.c)
+    message(STATUS "compile with drm support")
+else()
+    message(STATUS "compile without drm support")
 endif()
 
 set(MPP_ALLOCATOR
@@ -25,6 +28,7 @@ add_library(osal STATIC
     mpp_allocator.cpp
     mpp_thread.cpp
     mpp_common.cpp
+    mpp_queue.cpp
     mpp_time.cpp
     mpp_list.cpp
     mpp_mem.cpp

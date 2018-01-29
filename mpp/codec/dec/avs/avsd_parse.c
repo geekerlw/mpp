@@ -452,6 +452,7 @@ MPP_RET avsd_reset_parameters(AvsdCtx_t *p_dec)
     p_dec->cur = NULL;
     p_dec->dpb[0] = NULL;
     p_dec->dpb[1] = NULL;
+    p_dec->has_get_eos = 0;
 
     for (i = 0; i < MPP_ARRAY_ELEMS(p_dec->mem->save); i++) {
         memset(&p_dec->mem->save[i], 0, sizeof(AvsdFrame_t));
@@ -533,6 +534,31 @@ MPP_RET avsd_set_dpb(AvsdCtx_t *p_dec, HalDecTask *task)
             task->refer[0] = p_dec->dpb[1]->slot_idx;
         } else {
             task->refer[1] = p_dec->dpb[1]->slot_idx;
+        }
+    }
+
+    //!< set ref flag and mark error
+    if (p_dec->ph.picture_coding_type == I_PICTURE) {
+        task->flags.used_for_ref = 1;
+        task->flags.had_error = 0;
+    } else if (p_dec->ph.picture_coding_type == P_PICTURE) {
+        task->flags.used_for_ref = 1;
+        if (task->refer[0] >= 0) {
+            mpp_buf_slot_get_prop(p_dec->frame_slots, task->refer[0], SLOT_FRAME_PTR, &mframe);
+            if (mframe)
+                task->flags.had_error |= mpp_frame_get_errinfo(mframe);
+        }
+    } else if (p_dec->ph.picture_coding_type == B_PICTURE) {
+        task->flags.used_for_ref = 0;
+        if (task->refer[0] >= 0) {
+            mpp_buf_slot_get_prop(p_dec->frame_slots, task->refer[0], SLOT_FRAME_PTR, &mframe);
+            if (mframe)
+                task->flags.had_error |= mpp_frame_get_errinfo(mframe);
+        }
+        if (task->refer[1] >= 0) {
+            mpp_buf_slot_get_prop(p_dec->frame_slots, task->refer[1], SLOT_FRAME_PTR, &mframe);
+            if (mframe)
+                task->flags.had_error |= mpp_frame_get_errinfo(mframe);
         }
     }
 

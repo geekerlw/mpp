@@ -29,7 +29,7 @@
 extern RK_U32 h264e_hal_log_mode;
 
 #define H264E_DBG_SIMPLE            0x00000010
-
+#define H264E_DBG_REG               0x00000020
 #define H264E_DBG_FLOW              0x00000100
 
 #define H264E_DBG_DPB               0x00001000
@@ -38,7 +38,6 @@ extern RK_U32 h264e_hal_log_mode;
 #define H264E_DBG_RC                0x00008000
 
 #define H264E_DBG_DETAIL            0x00010000
-#define H264E_DBG_DUMP_RC           0x00020000
 
 #define H264E_DBG_FILE              0x00100000
 
@@ -162,7 +161,8 @@ extern RK_U32 h264e_hal_log_mode;
 #define H264E_MB_RC_MORE_BITRATE  3
 #define H264E_MB_RC_ONLY_BITRATE  4
 #define H264E_MB_RC_WIDE_RANGE    5
-#define H264E_MB_RC_M_NUM         6
+#define H264E_MB_RC_ONLY_AQ       6
+#define H264E_MB_RC_M_NUM         7
 
 typedef enum H264eRkvCsp_e {
     H264E_RKV_CSP_BGRA8888,     // 0
@@ -188,6 +188,7 @@ typedef enum H264VpuCsp_e {
     H264E_VPU_CSP_BGR565    = 5,    // 16-bit RGB
     H264E_VPU_CSP_RGB555    = 6,    // 15-bit RGB
     H264E_VPU_CSP_BGR555    = 7,    // 15-bit RGB
+    H264E_VPU_CSP_ARGB8888  = 7,
     H264E_VPU_CSP_RGB444    = 8,    // 12-bit RGB
     H264E_VPU_CSP_BGR444    = 9,    // 12-bit RGB
     H264E_VPU_CSP_RGB888    = 10,   // 24-bit RGB
@@ -421,21 +422,25 @@ typedef struct H264eHalContext_t {
     RK_U32                          frame_cnt_gen_ready;
     RK_U32                          frame_cnt_send_ready;
     RK_U32                          num_frames_to_send;
+    /* @frame_cnt starts from ZERO */
     RK_U32                          frame_cnt;
     H264eHalParam                   param;
     RK_U32                          enc_mode;
     RK_U32                          frame_size;
+    RK_U32                          alloc_flg;
 
     void                            *param_buf;
     MppPacket                       packeted_param;
 
     H264eOsdPltType                 osd_plt_type; //-1:invalid, 0:user define, 1:default
     MppEncOSDData                   osd_data;
+    MppEncROICfg                    roi_data;
     MppEncSeiMode                   sei_mode;
 
     MppEncCfgSet                    *cfg;
     MppEncCfgSet                    *set;
     RK_U32                          idr_pic_id;
+    RK_U32                          qp_scale; /* can be 1 or 2 */
 
     RK_U32                          buffer_ready;
     H264eHwCfg                      hw_cfg;

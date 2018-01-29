@@ -239,13 +239,16 @@ static RK_S32 h265d_split_frame(void *sc,
         mpp_fetch_timestamp(s, 0);
     }
 
-    if (s->eos) {
+    if (s->eos && !buf_size) {
         *poutbuf      = s->buffer;
         *poutbuf_size = s->index;
         return 0;
     }
 
     next = hevc_find_frame_end(s, buf, buf_size);
+    if (s->eos && buf_size && next == END_NOT_FOUND) {
+        next = buf_size;
+    }
 
     if (mpp_combine_frame(s, next, &buf, &buf_size) < 0) {
         *poutbuf      = NULL;
@@ -1182,14 +1185,18 @@ static RK_S32 hevc_frame_start(HEVCContext *s)
 
     s->is_decoded        = 0;
     s->first_nal_type    = s->nal_unit_type;
+    s->miss_ref_flag = 0;
+
+    ret = mpp_hevc_frame_rps(s);
+    if (ret < 0) {
+        mpp_err("Error constructing the frame RPS.\n");
+        goto fail;
+    }
 
     ret = mpp_hevc_set_new_ref(s, &s->frame, s->poc);
-
     if (ret < 0)
         goto fail;
 
-    s->miss_ref_flag = 0;
-    ret = mpp_hevc_frame_rps(s);
     if (s->miss_ref_flag) {
         if (!IS_IRAP(s)) {
             mpp_frame_set_errinfo(s->frame, MPP_FRAME_ERR_UNKNOW);
@@ -1222,10 +1229,6 @@ static RK_S32 hevc_frame_start(HEVCContext *s)
 
     mpp_buf_slot_set_prop(s->slots, s->ref->slot_index, SLOT_FRAME, s->ref->frame);
 
-    if (ret < 0) {
-        mpp_err("Error constructing the frame RPS.\n");
-        goto fail;
-    }
     return 0;
 
 fail:
@@ -1728,6 +1731,7 @@ MPP_RET h265d_prepare(void *ctx, MppPacket pkt, HalDecTask *task)
             s->checksum_buf_size = split_size;
             h265d_dbg(H265D_DBG_TIME, "split frame get pts %lld", sc->pts);
             s->pts = sc->pts;
+            s->eos = (s->eos && (mpp_packet_get_length(pkt) < 4)) ? 1 : 0;
         } else {
             return MPP_FAIL_SPLIT_FRAME;
         }
@@ -1738,7 +1742,6 @@ MPP_RET h265d_prepare(void *ctx, MppPacket pkt, HalDecTask *task)
         if (s->eos && !length) {
             task->valid = 0;
             task->flags.eos = 1;
-            mpp_log("hevc flush eos");
             h265d_flush(ctx);
             return ret;
         }
@@ -1802,14 +1805,11 @@ MPP_RET h265d_parse(void *ctx, HalDecTask *task)
         s->task->syntax.data = s->hal_pic_private;
         s->task->syntax.number = 1;
         s->task->valid = 1;
-        if (s->eos) {
-            s->task->flags.eos = 1;
-        }
-    } else {
-        if (s->eos) {
-            h265d_flush(ctx);
-            s->task->flags.eos = 1;
-        }
+
+    }
+    if (s->eos) {
+        h265d_flush(ctx);
+        s->task->flags.eos = 1;
     }
     s->nb_frame++;
     if (s->is_decoded) {
@@ -2001,31 +2001,40 @@ MPP_RET h265d_reset(void *ctx)
 
 MPP_RET h265d_control(void *ctx, RK_S32 cmd, void *param)
 {
-    (void)ctx;
-    (void)cmd;
-    (void)param;
+    H265dContext_t *h265dctx = (H265dContext_t *)ctx;
+
+    switch (cmd) {
+    case MPP_DEC_SET_DISABLE_ERROR: {
+        h265dctx->disable_error = *((RK_U32 *)param);
+    }
+    default : {
+    } break;
+    }
+
     return MPP_OK;
 }
 
 MPP_RET h265d_callback(void *ctx, void *err_info)
 {
     H265dContext_t *h265dctx = (H265dContext_t *)ctx;
-    HEVCContext *s = (HEVCContext *)h265dctx->priv_data;
-    MppFrame frame = NULL;
-    RK_U32 i = 0;
 
-    if (s->first_nal_type >= 16 && s->first_nal_type <= 23) {
-        mpp_log("IS_IRAP frame found error");
-        s->max_ra = INT_MAX;
-    }
-    // s->miss_ref_flag = 1;
-    mpp_buf_slot_get_prop(s->slots, s->ref->slot_index, SLOT_FRAME_PTR, &frame);
-    mpp_frame_set_errinfo(frame, MPP_FRAME_ERR_UNKNOW);
-    for (i = 0; i < MPP_ARRAY_ELEMS(s->DPB); i++) {
-        if (s->DPB[i].slot_index == s->ref->slot_index) {
-            s->DPB[i].error_flag = 1;
+    if (!h265dctx->disable_error) {
+        HEVCContext *s = (HEVCContext *)h265dctx->priv_data;
+        MppFrame frame = NULL;
+        RK_U32 i = 0;
+
+        if (s->first_nal_type >= 16 && s->first_nal_type <= 23) {
+            mpp_log("IS_IRAP frame found error");
+            s->max_ra = INT_MAX;
         }
-
+        // s->miss_ref_flag = 1;
+        mpp_buf_slot_get_prop(s->slots, s->ref->slot_index, SLOT_FRAME_PTR, &frame);
+        mpp_frame_set_errinfo(frame, MPP_FRAME_ERR_UNKNOW);
+        for (i = 0; i < MPP_ARRAY_ELEMS(s->DPB); i++) {
+            if (s->DPB[i].slot_index == s->ref->slot_index) {
+                s->DPB[i].error_flag = 1;
+            }
+        }
     }
     (void) err_info;
 

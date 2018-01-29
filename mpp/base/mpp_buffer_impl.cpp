@@ -33,6 +33,8 @@ typedef MPP_RET (*BufferOp)(MppAllocator allocator, MppBufferInfo *data);
 typedef enum MppBufOps_e {
     GRP_CREATE,
     GRP_RELEASE,
+    GRP_RESET,
+    GRP_ORPHAN,
     GRP_DESTROY,
 
     GRP_OPS_BUTT    = GRP_DESTROY,
@@ -41,6 +43,7 @@ typedef enum MppBufOps_e {
     BUF_MMAP,
     BUF_REF_INC,
     BUF_REF_DEC,
+    BUF_DISCARD,
     BUF_DESTROY,
     BUF_OPS_BUTT,
 } MppBufOps;
@@ -71,9 +74,11 @@ private:
     RK_U32              get_group_id();
     RK_U32              group_id;
     RK_U32              group_count;
+    RK_U32              finalizing;
 
-    MppBufferGroupImpl  *misc_ion_int;
-    MppBufferGroupImpl  *misc_ion_ext;
+    // misc group for internal / externl buffer with different type
+    MppBufferGroupImpl  *misc[MPP_BUFFER_MODE_BUTT][MPP_BUFFER_TYPE_BUTT];
+    RK_U32              misc_count;
 
     struct list_head    mListGroup;
 
@@ -90,11 +95,15 @@ public:
         return &lock;
     }
 
-    MppBufferGroupImpl  *get_group(const char *tag, const char *caller, MppBufferMode mode, MppBufferType type);
-    MppBufferGroupImpl  *get_misc_group(MppBufferMode mode, MppBufferType type);
+    MppBufferGroupImpl  *get_group(const char *tag, const char *caller,
+                                   MppBufferMode mode, MppBufferType type,
+                                   RK_U32 is_misc);
+    MppBufferGroupImpl  *get_misc(MppBufferMode mode, MppBufferType type);
+    void                set_misc(MppBufferMode mode, MppBufferType type, MppBufferGroupImpl *val);
     void                put_group(MppBufferGroupImpl *group);
     MppBufferGroupImpl  *get_group_by_id(RK_U32 id);
     void                dump_misc_group();
+    RK_U32              is_finalizing();
 };
 
 static const char *mode2str[MPP_BUFFER_MODE_BUTT] = {
@@ -111,12 +120,16 @@ static const char *type2str[MPP_BUFFER_TYPE_BUTT] = {
 static const char *ops2str[BUF_OPS_BUTT] = {
     "grp create ",
     "grp release",
+    "grp reset",
+    "grp orphan",
     "grp destroy",
+
     "buf commit ",
     "buf create ",
     "buf mmap   ",
     "buf ref inc",
     "buf ref dec",
+    "buf discard",
     "buf destroy",
 };
 
@@ -131,7 +144,8 @@ static void buffer_group_add_log(MppBufferGroupImpl *group,
                     group->group_id, buffer->buffer_id, buffer->info.fd,
                     ops2str[ops], buffer->ref_count, caller);
         } else {
-            mpp_log("group %2d ops %s\n", group->group_id, ops2str[ops]);
+            mpp_log("group %2d mode %d type %d ops %s\n", group->group_id,
+                    group->mode, group->type, ops2str[ops]);
         }
     }
     if (group->log_history_en) {
@@ -181,22 +195,28 @@ static void buffer_group_dump_log(MppBufferGroupImpl *group)
 
 static MPP_RET deinit_buffer_no_lock(MppBufferImpl *buffer, const char *caller)
 {
-    mpp_assert(buffer->ref_count == 0);
-    mpp_assert(buffer->used == 0);
+    if (!MppBufferService::get_instance()->is_finalizing()) {
+        mpp_assert(buffer->ref_count == 0);
+        mpp_assert(buffer->used == 0);
+    }
 
     list_del_init(&buffer->list_status);
     MppBufferGroupImpl *group = SEARCH_GROUP_BY_ID(buffer->group_id);
-    BufferOp func = (group->mode == MPP_BUFFER_INTERNAL) ?
-                    (group->alloc_api->free) :
-                    (group->alloc_api->release);
-    func(group->allocator, &buffer->info);
-    group->usage -= buffer->info.size;
-    group->buffer_count--;
+    if (group) {
+        BufferOp func = (group->mode == MPP_BUFFER_INTERNAL) ?
+                        (group->alloc_api->free) :
+                        (group->alloc_api->release);
+        func(group->allocator, &buffer->info);
+        group->usage -= buffer->info.size;
+        group->buffer_count--;
 
-    buffer_group_add_log(group, buffer, BUF_DESTROY, caller);
+        buffer_group_add_log(group, buffer, BUF_DESTROY, caller);
 
-    if (group->is_orphan && !group->usage) {
-        MppBufferService::get_instance()->put_group(group);
+        if (group->is_orphan && !group->usage) {
+            MppBufferService::get_instance()->put_group(group);
+        }
+    } else {
+        mpp_assert(MppBufferService::get_instance()->is_finalizing());
     }
 
     mpp_free(buffer);
@@ -366,7 +386,7 @@ MPP_RET mpp_buffer_ref_dec(MppBufferImpl *buffer, const char* caller)
         if (0 == buffer->ref_count) {
             buffer->used = 0;
             list_del_init(&buffer->list_status);
-            if (group == MppBufferService::get_instance()->get_misc_group(group->mode, group->type)) {
+            if (group == MppBufferService::get_instance()->get_misc(group->mode, group->type)) {
                 deinit_buffer_no_lock(buffer, caller);
             } else {
                 if (buffer->discard) {
@@ -433,7 +453,7 @@ MPP_RET mpp_buffer_group_init(MppBufferGroupImpl **group, const char *tag, const
     mpp_assert(caller);
     MPP_BUF_FUNCTION_ENTER();
 
-    *group = MppBufferService::get_instance()->get_group(tag, caller, mode, type);
+    *group = MppBufferService::get_instance()->get_group(tag, caller, mode, type, 0);
 
     MPP_BUF_FUNCTION_LEAVE();
     return ((*group) ? (MPP_OK) : (MPP_NOK));
@@ -465,10 +485,12 @@ MPP_RET mpp_buffer_group_reset(MppBufferGroupImpl *p)
 
     MPP_BUF_FUNCTION_ENTER();
 
+    buffer_group_add_log(p, NULL, GRP_RESET, NULL);
+
     if (!list_empty(&p->list_used)) {
         MppBufferImpl *pos, *n;
         list_for_each_entry_safe(pos, n, &p->list_used, MppBufferImpl, list_status) {
-            // mpp_buffer_ref_dec(pos);
+            buffer_group_add_log(p, pos, BUF_DISCARD, NULL);
             pos->discard = 1;
         }
     }
@@ -533,40 +555,64 @@ void mpp_buffer_service_dump()
 MppBufferGroupImpl *mpp_buffer_get_misc_group(MppBufferMode mode, MppBufferType type)
 {
     AutoMutex auto_lock(MppBufferService::get_lock());
-    return MppBufferService::get_instance()->get_misc_group(mode, type);
+    MppBufferGroupImpl *misc = MppBufferService::get_instance()->get_misc(mode, type);
+    if (NULL == misc) {
+        char tag[16];
+        RK_S32 offset = 0;
+
+        offset += snprintf(tag + offset, sizeof(tag) - offset, "misc");
+        offset += snprintf(tag + offset, sizeof(tag) - offset, "_%s",
+                           type == MPP_BUFFER_TYPE_ION ? "ion" :
+                           type == MPP_BUFFER_TYPE_DRM ? "drm" : "na");
+        offset += snprintf(tag + offset, sizeof(tag) - offset, "_%s",
+                           mode == MPP_BUFFER_INTERNAL ? "int" : "ext");
+
+        misc = MppBufferService::get_instance()->get_group(tag, __FUNCTION__, mode, type, 1);
+    }
+    return misc;
 }
 
 MppBufferService::MppBufferService()
     : group_id(0),
       group_count(0),
-      misc_ion_int(NULL),
-      misc_ion_ext(NULL)
+      finalizing(0),
+      misc_count(0)
 {
+    RK_S32 i, j;
+
     INIT_LIST_HEAD(&mListGroup);
     INIT_LIST_HEAD(&mListOrphan);
 
-    // NOTE: here can not call mpp_buffer_group_init for the service is not started
-    //       misc group can accept all kind of buffer which is available
-    misc_ion_int = get_group("misc_ion_int", "MppBufferService", MPP_BUFFER_INTERNAL, MPP_BUFFER_TYPE_ION);
-    misc_ion_ext = get_group("misc_ion_ext", "MppBufferService", MPP_BUFFER_EXTERNAL, MPP_BUFFER_TYPE_ION);
+    // NOTE: Do not create misc group at beginning. Only create on when needed.
+    for (i = 0; i < MPP_BUFFER_MODE_BUTT; i++)
+        for (j = 0; j < MPP_BUFFER_TYPE_BUTT; j++)
+            misc[i][j] = NULL;
 }
 
 MppBufferService::~MppBufferService()
 {
-    // first remove legacy group
-    if (misc_ion_ext) {
-        put_group(misc_ion_ext);
-        misc_ion_ext = NULL;
+    RK_S32 i, j;
+
+    finalizing = 1;
+
+    // first remove legacy group which is the normal case
+    if (misc_count) {
+        mpp_log_f("cleaning misc group\n");
+        for (i = 0; i < MPP_BUFFER_MODE_BUTT; i++)
+            for (j = 0; j < MPP_BUFFER_TYPE_BUTT; j++) {
+                MppBufferGroupImpl *pos = misc[i][j];
+                if (pos) {
+                    put_group(pos);
+                    misc[i][j] = NULL;
+                }
+            }
     }
 
-    if (misc_ion_int) {
-        put_group(misc_ion_int);
-        misc_ion_int = NULL;
-    }
-
-    // then remove the remaining group
+    // then remove the remaining group which is the leak one
     if (!list_empty(&mListGroup)) {
         MppBufferGroupImpl *pos, *n;
+
+        mpp_log_f("cleaning leaked group\n");
         list_for_each_entry_safe(pos, n, &mListGroup, MppBufferGroupImpl, list_group) {
             put_group(pos);
         }
@@ -575,6 +621,8 @@ MppBufferService::~MppBufferService()
     // remove all orphan buffer
     if (!list_empty(&mListOrphan)) {
         MppBufferImpl *pos, *n;
+
+        mpp_log_f("cleaning leaked buffer\n");
         list_for_each_entry_safe(pos, n, &mListOrphan, MppBufferImpl, list_status) {
             deinit_buffer_no_lock(pos, __FUNCTION__);
         }
@@ -593,7 +641,8 @@ RK_U32 MppBufferService::get_group_id()
 }
 
 MppBufferGroupImpl *MppBufferService::get_group(const char *tag, const char *caller,
-                                                MppBufferMode mode, MppBufferType type)
+                                                MppBufferMode mode, MppBufferType type,
+                                                RK_U32 is_misc)
 {
     MppBufferGroupImpl *p = mpp_calloc(MppBufferGroupImpl, 1);
     if (NULL == p) {
@@ -630,17 +679,37 @@ MppBufferGroupImpl *MppBufferService::get_group(const char *tag, const char *cal
 
     buffer_group_add_log(p, NULL, GRP_CREATE, __FUNCTION__);
 
+    mpp_assert(mode < MPP_BUFFER_MODE_BUTT);
+    mpp_assert(type < MPP_BUFFER_TYPE_BUTT);
+
+    if (is_misc) {
+        misc[mode][type] = p;
+        misc_count++;
+    }
+
     return p;
 }
 
-MppBufferGroupImpl *MppBufferService::get_misc_group(MppBufferMode mode, MppBufferType type)
+MppBufferGroupImpl *MppBufferService::get_misc(MppBufferMode mode, MppBufferType type)
 {
     if (type == MPP_BUFFER_TYPE_NORMAL)
         return NULL;
 
-    mpp_assert(type == MPP_BUFFER_TYPE_ION);
     mpp_assert(mode < MPP_BUFFER_MODE_BUTT);
-    return (mode == MPP_BUFFER_INTERNAL) ? (misc_ion_int) : (misc_ion_ext);
+    mpp_assert(type < MPP_BUFFER_TYPE_BUTT);
+
+    return misc[mode][type];
+}
+
+void MppBufferService::set_misc(MppBufferMode mode, MppBufferType type, MppBufferGroupImpl *val)
+{
+    if (type == MPP_BUFFER_TYPE_NORMAL)
+        return ;
+
+    mpp_assert(mode < MPP_BUFFER_MODE_BUTT);
+    mpp_assert(type < MPP_BUFFER_TYPE_BUTT);
+
+    misc[mode][type] = val;
 }
 
 void MppBufferService::put_group(MppBufferGroupImpl *p)
@@ -659,10 +728,13 @@ void MppBufferService::put_group(MppBufferGroupImpl *p)
     if (list_empty(&p->list_used)) {
         destroy_group(p);
     } else {
-        mpp_err("mpp_group %p tag %s caller %s mode %s type %s deinit with %d bytes not released\n",
-                p, p->tag, p->caller, mode2str[p->mode], type2str[p->type], p->usage);
+        if (!finalizing ||
+            (finalizing && (mpp_buffer_debug & MPP_BUF_DBG_DUMP_ON_EXIT))) {
+            mpp_err("mpp_group %p tag %s caller %s mode %s type %s deinit with %d bytes not released\n",
+                    p, p->tag, p->caller, mode2str[p->mode], type2str[p->type], p->usage);
 
-        mpp_buffer_group_dump(p);
+            mpp_buffer_group_dump(p);
+        }
 
         /* if clear on exit we need to release remaining buffer */
         if (p->clear_on_exit) {
@@ -682,6 +754,7 @@ void MppBufferService::put_group(MppBufferGroupImpl *p)
             destroy_group(p);
         } else {
             // otherwise move the group to list_orphan and wait for buffer release
+            buffer_group_add_log(p, NULL, GRP_ORPHAN, __FUNCTION__);
             list_del_init(&p->list_group);
             list_add_tail(&p->list_group, &mListOrphan);
             p->is_orphan = 1;
@@ -691,6 +764,9 @@ void MppBufferService::put_group(MppBufferGroupImpl *p)
 
 void MppBufferService::destroy_group(MppBufferGroupImpl *group)
 {
+    MppBufferMode mode = group->mode;
+    MppBufferType type = group->type;
+
     mpp_assert(group->count_used == 0);
     mpp_assert(group->count_unused == 0);
     if (group->count_unused || group->count_used) {
@@ -719,15 +795,9 @@ void MppBufferService::destroy_group(MppBufferGroupImpl *group)
     mpp_free(group);
     group_count--;
 
-    if (group == misc_ion_int) {
-        misc_ion_int = NULL;
-    } else {
-        /* if only legacy group left dump the legacy group */
-        if (group_count == 1 && misc_ion_int && misc_ion_int->buffer_count) {
-            mpp_log("found legacy group has buffer remain, start dumping\n");
-            mpp_buffer_group_dump(misc_ion_int);
-            abort();
-        }
+    if (group == misc[mode][type]) {
+        misc[mode][type] = NULL;
+        misc_count--;
     }
 }
 
@@ -751,10 +821,17 @@ MppBufferGroupImpl *MppBufferService::get_group_by_id(RK_U32 id)
 
 void MppBufferService::dump_misc_group()
 {
-    if (misc_ion_int->buffer_count)
-        mpp_buffer_group_dump(misc_ion_int);
+    RK_S32 i, j;
 
-    if (misc_ion_ext->buffer_count)
-        mpp_buffer_group_dump(misc_ion_ext);
+    for (i = 0; i < MPP_BUFFER_MODE_BUTT; i++)
+        for (j = 0; j < MPP_BUFFER_TYPE_BUTT; j++) {
+            if (misc[i][j])
+                mpp_buffer_group_dump(misc[i][j]);
+        }
+}
+
+RK_U32 MppBufferService::is_finalizing()
+{
+    return finalizing;
 }
 

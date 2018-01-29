@@ -300,6 +300,8 @@ RK_S32 vpu_open_context(VpuCodecContext **ctx)
     RK_U32 height = 0;
     void  *extradata = NULL;
     RK_S32 extradata_size = 0;
+    EXtraCfg_t extra_cfg;
+    memset(&extra_cfg, 0, sizeof(EXtraCfg_t));
 
     vpu_api_dbg_func("enter\n");
 
@@ -338,7 +340,7 @@ RK_S32 vpu_open_context(VpuCodecContext **ctx)
     } else {
         if (s->videoCoding == OMX_RK_VIDEO_CodingAVC
             && s->codecType == CODEC_DECODER && s->width <= 1920
-            && s->height <= 1088) {
+            && s->height <= 1088 && !s->extra_cfg.mpp_mode) {
             /* H.264 smaller than 1080p use original vpuapi library for better error process */
             use_mpp = 0;
         } else {
@@ -368,6 +370,7 @@ RK_S32 vpu_open_context(VpuCodecContext **ctx)
         height          = s->height;
         extradata       = s->extradata;
         extradata_size  = s->extradata_size;
+        extra_cfg       = s->extra_cfg;
 
         free(s);
         s = NULL;
@@ -378,7 +381,9 @@ RK_S32 vpu_open_context(VpuCodecContext **ctx)
 
         ret = open_orign_vpu(&s);
         if (!ret && s) {
-            s->extra_cfg.reserved[0] = 1;
+            // for safety
+            s->extra_cfg.ori_vpu = 1;
+            extra_cfg.ori_vpu = 1;
         }
     } else {
         vpu_api_dbg_func("use mpp path\n");
@@ -418,6 +423,7 @@ RK_S32 vpu_open_context(VpuCodecContext **ctx)
         s->height           = height;
         s->extradata        = extradata;
         s->extradata_size   = extradata_size;
+        s->extra_cfg        = extra_cfg;
     }
     *ctx = s;
 
@@ -435,7 +441,7 @@ RK_S32 vpu_close_context(VpuCodecContext **ctx)
     mpp_env_get_u32("force_original", &force_original, 0);
 
     if (s) {
-        if (s->extra_cfg.reserved[0]) {
+        if (s->extra_cfg.ori_vpu) {
             ret = close_orign_vpu(ctx);
             mpp_log("org vpu_close_context ok");
         } else {

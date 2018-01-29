@@ -37,6 +37,7 @@ typedef struct {
     RK_S32          task_count;
     RK_U8           *stream;
     size_t          stream_size;
+    size_t          left_length;
     MppPacket       task_pkt;
     RK_S64          task_pts;
     RK_U32          task_eos;
@@ -51,7 +52,7 @@ typedef struct {
     Mpg4dParser     parser;
 } Mpg4dCtx;
 
-MPP_RET mpg4d_init(void *dec, ParserCfg *cfg)
+static MPP_RET mpg4d_init(void *dec, ParserCfg *cfg)
 {
     Mpg4dParser parser = NULL;
     MppPacket task_pkt = NULL;
@@ -99,7 +100,7 @@ MPP_RET mpg4d_init(void *dec, ParserCfg *cfg)
     p->stream_size  = stream_size;
     p->task_pkt     = task_pkt;
     p->parser       = parser;
-
+    p->left_length  = 0;
     return MPP_OK;
 ERR_RET:
     if (task_pkt) {
@@ -112,7 +113,7 @@ ERR_RET:
     return ret;
 }
 
-MPP_RET mpg4d_deinit(void *dec)
+static MPP_RET mpg4d_deinit(void *dec)
 {
     Mpg4dCtx *p;
     if (NULL == dec) {
@@ -137,7 +138,7 @@ MPP_RET mpg4d_deinit(void *dec)
     return MPP_OK;
 }
 
-MPP_RET mpg4d_reset(void *dec)
+static MPP_RET mpg4d_reset(void *dec)
 {
     if (NULL == dec) {
         mpp_err_f("found NULL intput\n");
@@ -145,11 +146,11 @@ MPP_RET mpg4d_reset(void *dec)
     }
 
     Mpg4dCtx *p = (Mpg4dCtx *)dec;
+    p->left_length  = 0;
     return mpp_mpg4_parser_reset(p->parser);
 }
 
-
-MPP_RET mpg4d_flush(void *dec)
+static MPP_RET mpg4d_flush(void *dec)
 {
     if (NULL == dec) {
         mpp_err_f("found NULL intput\n");
@@ -160,8 +161,7 @@ MPP_RET mpg4d_flush(void *dec)
     return mpp_mpg4_parser_flush(p->parser);
 }
 
-
-MPP_RET mpg4d_control(void *dec, RK_S32 cmd_type, void *param)
+static MPP_RET mpg4d_control(void *dec, RK_S32 cmd_type, void *param)
 {
     Mpg4dCtx *p;
 
@@ -180,7 +180,7 @@ MPP_RET mpg4d_control(void *dec, RK_S32 cmd_type, void *param)
     return MPP_OK;
 }
 
-MPP_RET mpg4d_prepare(void *dec, MppPacket pkt, HalDecTask *task)
+static MPP_RET mpg4d_prepare(void *dec, MppPacket pkt, HalDecTask *task)
 {
     Mpg4dCtx *p;
     RK_U8 *pos;
@@ -200,7 +200,6 @@ MPP_RET mpg4d_prepare(void *dec, MppPacket pkt, HalDecTask *task)
     if (eos && !length) {
         task->valid = 0;
         task->flags.eos = 1;
-        mpp_log("mpeg4d flush eos");
         mpg4d_flush(dec);
         return MPP_OK;
     }
@@ -209,6 +208,32 @@ MPP_RET mpg4d_prepare(void *dec, MppPacket pkt, HalDecTask *task)
         mpp_err("failed to malloc task buffer for hardware with size %d\n", length);
         return MPP_ERR_UNKNOW;
     }
+    mpp_packet_set_length(p->task_pkt, p->left_length);
+
+    /*
+    * Check have enough buffer to store stream
+    * NOTE: total length is the left size plus the new incoming
+    *       packet length.
+    */
+    size_t total_length = MPP_ALIGN(p->left_length + length, 16) + 64; // add extra 64 bytes in tails
+
+    if (total_length > p->stream_size) {
+        RK_U8 *dst = NULL;
+        do {
+            p->stream_size <<= 1;
+        } while (total_length > p->stream_size);
+
+        dst = mpp_malloc_size(RK_U8, p->stream_size);
+        mpp_assert(dst);
+        // NOTE: copy remaining stream to new buffer
+        if (p->left_length > 0) {
+            memcpy(dst, p->stream, p->left_length);
+        }
+        mpp_free(p->stream);
+        p->stream = dst;
+        mpp_packet_set_data(p->task_pkt, p->stream);
+        mpp_packet_set_size(p->task_pkt, p->stream_size);
+    }
 
     if (!p->need_split) {
         /*
@@ -216,19 +241,6 @@ MPP_RET mpg4d_prepare(void *dec, MppPacket pkt, HalDecTask *task)
          * Decoder's user will insure each packet is one frame for process
          * Parser will just copy packet to the beginning of stream buffer
          */
-        if (length > p->stream_size) {
-            // NOTE: here we double the buffer length to reduce frequency of realloc
-            do {
-                p->stream_size <<= 1;
-            } while (length > p->stream_size);
-
-            mpp_free(p->stream);
-            p->stream = mpp_malloc_size(RK_U8, p->stream_size);
-            mpp_assert(p->stream);
-            mpp_packet_set_data(p->task_pkt, p->stream);
-            mpp_packet_set_size(p->task_pkt, p->stream_size);
-        }
-
         memcpy(p->stream, pos, length);
         mpp_packet_set_pos(p->task_pkt, p->stream);
         mpp_packet_set_length(p->task_pkt, length);
@@ -246,32 +258,12 @@ MPP_RET mpg4d_prepare(void *dec, MppPacket pkt, HalDecTask *task)
          * Input packet can be any length and no need to be bound of on frame
          * Parser will do split frame operation to find the beginning and end of one frame
          */
-        /*
-         * NOTE: on split mode total length is the left size plus the new incoming
-         *       packet length.
-         */
-        size_t remain_length = mpp_packet_get_length(p->task_pkt);
-        size_t total_length = remain_length + length;
-        if (total_length > p->stream_size) {
-            RK_U8 *dst;
-            do {
-                p->stream_size <<= 1;
-            } while (length > p->stream_size);
-
-            // NOTE; split mode need to copy remaining stream to new buffer
-            dst = mpp_malloc_size(RK_U8, p->stream_size);
-            mpp_assert(dst);
-
-            memcpy(dst, p->stream, remain_length);
-            mpp_free(p->stream);
-            p->stream = dst;
-            mpp_packet_set_data(p->task_pkt, p->stream);
-            mpp_packet_set_size(p->task_pkt, p->stream_size);
-        }
-
-        // start parser split
         if (MPP_OK == mpp_mpg4_parser_split(p->parser, p->task_pkt, pkt)) {
+            p->left_length = 0;
             task->valid = 1;
+        } else {
+            task->valid = 0;
+            p->left_length = mpp_packet_get_length(p->task_pkt);
         }
         p->task_pts = mpp_packet_get_pts(p->task_pkt);
         p->task_eos = mpp_packet_get_eos(p->task_pkt);
@@ -284,7 +276,7 @@ MPP_RET mpg4d_prepare(void *dec, MppPacket pkt, HalDecTask *task)
     return MPP_OK;
 }
 
-MPP_RET mpg4d_parse(void *dec, HalDecTask *task)
+static MPP_RET mpg4d_parse(void *dec, HalDecTask *task)
 {
     MPP_RET ret;
     Mpg4dCtx *p;
@@ -300,6 +292,7 @@ MPP_RET mpg4d_parse(void *dec, HalDecTask *task)
         task->valid  = 0;
         task->output = -1;
         mpp_packet_set_length(task->input_packet, 0);
+
         return MPP_NOK;
     }
 
@@ -313,7 +306,7 @@ MPP_RET mpg4d_parse(void *dec, HalDecTask *task)
     return MPP_OK;
 }
 
-MPP_RET mpg4d_callback(void *dec, void *err_info)
+static MPP_RET mpg4d_callback(void *dec, void *err_info)
 {
     (void)dec;
     (void)err_info;
@@ -321,17 +314,17 @@ MPP_RET mpg4d_callback(void *dec, void *err_info)
 }
 
 const ParserApi api_mpg4d_parser = {
-    "api_mpg4d_parser",
-    MPP_VIDEO_CodingMPEG4,
-    sizeof(Mpg4dCtx),
-    0,
-    mpg4d_init,
-    mpg4d_deinit,
-    mpg4d_prepare,
-    mpg4d_parse,
-    mpg4d_reset,
-    mpg4d_flush,
-    mpg4d_control,
-    mpg4d_callback,
+    .name = "api_mpg4d_parser",
+    .coding = MPP_VIDEO_CodingMPEG4,
+    .ctx_size = sizeof(Mpg4dCtx),
+    .flag = 0,
+    .init = mpg4d_init,
+    .deinit = mpg4d_deinit,
+    .prepare = mpg4d_prepare,
+    .parse = mpg4d_parse,
+    .reset = mpg4d_reset,
+    .flush = mpg4d_flush,
+    .control = mpg4d_control,
+    .callback = mpg4d_callback,
 };
 

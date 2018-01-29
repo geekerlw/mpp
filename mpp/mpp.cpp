@@ -81,7 +81,7 @@ MPP_RET Mpp::init(MppCtxType type, MppCodingType coding)
     mCoding = coding;
     switch (mType) {
     case MPP_CTX_DEC : {
-        mPackets    = new mpp_list((node_destructor)mpp_packet_deinit);
+        mPackets    = new MppQueue((node_destructor)mpp_packet_deinit);
         mFrames     = new mpp_list((node_destructor)mpp_frame_deinit);
         mTasks      = new mpp_list((node_destructor)NULL);
 
@@ -116,7 +116,7 @@ MPP_RET Mpp::init(MppCtxType type, MppCodingType coding)
     } break;
     case MPP_CTX_ENC : {
         mFrames     = new mpp_list((node_destructor)NULL);
-        mPackets    = new mpp_list((node_destructor)mpp_packet_deinit);
+        mPackets    = new MppQueue((node_destructor)mpp_packet_deinit);
         mTasks      = new mpp_list((node_destructor)NULL);
 
         mpp_enc_init(&mEnc, coding);
@@ -264,9 +264,8 @@ MPP_RET Mpp::put_packet(MppPacket packet)
         if (MPP_OK != mpp_packet_copy_init(&pkt, packet))
             return MPP_NOK;
 
-        mPackets->add_at_tail(&pkt, sizeof(pkt));
+        mPackets->push(&pkt, sizeof(pkt));
         mPacketPutCount++;
-        mThreadCodec->signal();
 
         // when packet has been send clear the length
         mpp_packet_set_length(packet, 0);
@@ -287,7 +286,6 @@ MPP_RET Mpp::get_frame(MppFrame *frame)
     MppFrame first = NULL;
 
     if (0 == mFrames->list_size()) {
-        mThreadCodec->signal();
         if (mOutputBlock == MPP_POLL_BLOCK) {
             if (mOutputBlockTimeout >= 0) {
                 ret = mFrames->wait(mOutputBlockTimeout);
@@ -297,8 +295,9 @@ MPP_RET Mpp::get_frame(MppFrame *frame)
                     else
                         return MPP_NOK;
                 }
-            } else
+            } else {
                 mFrames->wait();
+            }
         } else {
             /* NOTE: this sleep is to avoid user's dead loop */
             msleep(1);
@@ -697,7 +696,8 @@ MPP_RET Mpp::control_dec(MpiCmd cmd, MppParam param)
         if (param) {
             mExternalFrameGroup = 1;
             if (mThreadCodec) {
-                ret = mpp_buffer_group_set_listener((MppBufferGroupImpl *)param, (void *)mThreadCodec);
+                ret = mpp_buffer_group_set_listener((MppBufferGroupImpl *)param,
+                                                    (void *)mThreadCodec);
                 mThreadCodec->signal();
             } else {
                 /*
@@ -710,12 +710,14 @@ MPP_RET Mpp::control_dec(MpiCmd cmd, MppParam param)
                 mpp_err("WARNING: setup buffer group before decoder init\n");
             }
         } else {
+            /* The buffer group should be destroyed before */
             mExternalFrameGroup = 0;
-            ret = mpp_buffer_group_set_listener(NULL, (void *)mThreadCodec);
+            ret = MPP_OK;
         }
     } break;
     case MPP_DEC_SET_INFO_CHANGE_READY: {
         ret = mpp_buf_slot_ready(mDec->frame_slots);
+        mThreadCodec->signal();
     } break;
     case MPP_DEC_SET_INTERNAL_PTS_ENABLE: {
         if (mCoding == MPP_VIDEO_CodingMPEG2 || mCoding == MPP_VIDEO_CodingMPEG4) {
@@ -739,16 +741,11 @@ MPP_RET Mpp::control_dec(MpiCmd cmd, MppParam param)
         *((RK_S32 *)param) = mPackets->list_size();
         ret = MPP_OK;
     } break;
-    case MPP_DEC_GET_VPUMEM_USED_COUNT: {
+    case MPP_DEC_GET_VPUMEM_USED_COUNT:
+    case MPP_DEC_SET_OUTPUT_FORMAT:
+    case MPP_DEC_SET_DISABLE_ERROR: {
         ret = mpp_dec_control(mDec, cmd, param);
-    } break;
-    case MPP_DEC_SET_OUTPUT_FORMAT: {
-        ret = mpp_dec_control(mDec, cmd, param);
-    } break;
-    case MPP_DEC_GET_FREE_PACKET_SLOT_COUNT: {
-        *((RK_S32 *)param) = MPP_MAX_INPUT_PACKETS - mPackets->list_size();
-        ret = MPP_OK;
-    } break;
+    }
     default : {
     } break;
     }

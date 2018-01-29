@@ -39,25 +39,6 @@ static const RK_S32 h264e_vpu_csp_idx_map[H264E_VPU_CSP_BUTT] = {
     H264E_CSP2_RGB, H264E_CSP2_BGR,
 };
 
-static const RK_U8 h264e_ue_size_tab[256] = {
-    1, 1, 3, 3, 5, 5, 5, 5, 7, 7, 7, 7, 7, 7, 7, 7,
-    9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9,
-    11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11,
-    11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11,
-    13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
-    13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
-    13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
-    13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
-    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-};
-
 /* default quant matrices */
 static const RK_U8 h264e_cqm_jvt4i[16] = {
     6, 13, 20, 28,
@@ -412,11 +393,17 @@ void h264e_vpu_set_format(H264eHwCfg *hw_cfg, MppEncPrepCfg *prep_cfg)
         break;
     }
     case MPP_FMT_ARGB8888: {
-        hw_cfg->input_format = H264E_VPU_CSP_NONE;
+        hw_cfg->input_format = H264E_VPU_CSP_ARGB8888;
+        hw_cfg->b_mask_msb = 23;
+        hw_cfg->g_mask_msb = 15;
+        hw_cfg->r_mask_msb = 7;
         break;
     }
     case MPP_FMT_ABGR8888: {
-        hw_cfg->input_format = H264E_VPU_CSP_NONE;
+        hw_cfg->input_format = H264E_VPU_CSP_ARGB8888;
+        hw_cfg->r_mask_msb = 23;
+        hw_cfg->g_mask_msb = 15;
+        hw_cfg->b_mask_msb = 7;
         break;
     }
     default: {
@@ -742,7 +729,7 @@ void h264e_sei_pack2str(char *str, H264eHalContext *ctx, RcSyntax *rc_syn)
     MppEncRcCfg *rc = &cfg->rc;
     H264eHwCfg *hw_cfg = &ctx->hw_cfg;
     RK_U32 prep_change = prep->change & MPP_ENC_PREP_CFG_CHANGE_INPUT;
-    RK_U32 codec_change = prep->change;
+    RK_U32 codec_change = codec->change;
     RK_U32 rc_change = rc->change;
     RK_S32 len = H264E_SEI_BUF_SIZE - H264E_UUID_LENGTH;
 
@@ -786,14 +773,57 @@ void h264e_sei_pack2str(char *str, H264eHalContext *ctx, RcSyntax *rc_syn)
         H264E_HAL_SPRINT(str, len, "fps_out=%d:%d:%d ", rc->fps_out_num, rc->fps_out_denorm, rc->fps_out_flex);
         H264E_HAL_SPRINT(str, len, "gop=%d ", rc->gop);
     }
+    /* record detailed RC parameter
+     * Start to write parameter when the first frame is encoded,
+     * because we can get all parameter only when it's encoded.
+     */
+    if (rc_syn && rc_syn->rc_head && (ctx->frame_cnt > 0)) {
+        RecordNode *pos, *m;
+        MppLinReg *lin_reg;
 
-    if (rc_syn) {
+        list_for_each_entry_safe(pos, m, rc_syn->rc_head, RecordNode, list) {
+            if (ctx->frame_cnt == pos->frm_cnt) {
+                H264E_HAL_SPRINT(str, len, "[frm %d]detailed param ", pos->frm_cnt);
+                H264E_HAL_SPRINT(str, len, "tgt_bits=%d:%d:%d:%d ",
+                                 pos->tgt_bits, pos->real_bits,
+                                 pos->bit_min, pos->bit_max);
+                H264E_HAL_SPRINT(str, len, "tgt_qp=%d:%d:%d:%d ",
+                                 pos->set_qp, pos->real_qp,
+                                 pos->qp_min, pos->qp_max);
+
+                H264E_HAL_SPRINT(str, len, "per_pic=%d intra=%d inter=%d ",
+                                 pos->bits_per_pic,
+                                 pos->bits_per_intra, pos->bits_per_inter);
+                H264E_HAL_SPRINT(str, len, "acc_intra=%d inter=%d last_fps=%d ",
+                                 pos->acc_intra_bits_in_fps,
+                                 pos->acc_inter_bits_in_fps,
+                                 pos->last_fps_bits);
+                H264E_HAL_SPRINT(str, len, "qp_sum=%d sse_sum=%lld ",
+                                 pos->qp_sum, pos->sse_sum);
+
+                lin_reg = &pos->lin_reg;
+                H264E_HAL_SPRINT(str, len, "size=%d n=%d i=%d ",
+                                 lin_reg->size, lin_reg->n, lin_reg->i);
+                H264E_HAL_SPRINT(str, len, "a=%0.2f b=%0.2f c=%0.2f ",
+                                 lin_reg->a, lin_reg->b, lin_reg->c);
+                H264E_HAL_SPRINT(str, len, "weight_len=%d wlen=%d ",
+                                 lin_reg->weight_mode, pos->wlen);
+
+                /* frame type is intra */
+                if (pos->frm_type == INTRA_FRAME)
+                    H264E_HAL_SPRINT(str, len, "fps=%d gop=%d I=%0.2f ", pos->fps,
+                                     pos->gop, pos->last_intra_percent);
+
+                break;
+            }
+        }
+    }
+    /* frame type is intra */
+    if (rc_syn && (hw_cfg->frame_type == 2)) {
         H264E_HAL_SPRINT(str, len, "[frm %d] ", ctx->frame_cnt);
         H264E_HAL_SPRINT(str, len, "rc_mode=%d ", rc->rc_mode);
         H264E_HAL_SPRINT(str, len, "quality=%d ", rc->quality);
         H264E_HAL_SPRINT(str, len, "bps=%d:%d:%d ", rc->bps_target, rc->bps_min, rc->bps_max);
-        H264E_HAL_SPRINT(str, len, "tgt_bit=%d:%d:%d ", rc_syn->bit_target, rc_syn->bit_min, rc_syn->bit_max);
-        H264E_HAL_SPRINT(str, len, "qp=%d:%d:%d ", hw_cfg->qp, hw_cfg->qp_min, hw_cfg->qp_max);
     }
 }
 

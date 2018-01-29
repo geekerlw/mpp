@@ -59,6 +59,9 @@ typedef struct {
      * TODO: on link table mode there will be multiple result
      */
     RcHalResult     result;
+
+    /* used to record rc parameter */
+    struct list_head rc_list;
 } H264eCtx;
 
 MPP_RET h264e_init(void *ctx, ControllerCfg *ctrl_cfg)
@@ -113,6 +116,8 @@ MPP_RET h264e_init(void *ctx, ControllerCfg *ctrl_cfg)
 
     ret = mpp_rc_init(&p->rc);
 
+    INIT_LIST_HEAD(&p->rc_list);
+
     mpp_env_get_u32("h264e_debug", &h264e_debug, 0);
 
     h264e_dbg_func("leave\n");
@@ -127,6 +132,14 @@ MPP_RET h264e_deinit(void *ctx)
 
     if (p->rc)
         mpp_rc_deinit(p->rc);
+
+    struct list_head *del = &p->rc_list;
+    struct list_head *tmp;
+    while (!list_empty(del)) {
+        tmp = del->next;
+        list_del_init(tmp);
+        free(list_entry(tmp, RecordNode, list));
+    }
 
     h264e_dbg_func("leave\n");
     return MPP_OK;
@@ -152,6 +165,13 @@ MPP_RET h264e_encode(void *ctx, HalEncTask *task)
         p->idr_request--;
 
     mpp_rc_bits_allocation(p->rc, rc_syn);
+    if (rc_syn->bit_target <= 0) {
+        int mb_width = ((cfg->prep.width + 15) & (~15)) >> 4;
+        int mb_height = ((cfg->prep.height + 15) & (~15)) >> 4;
+        /* When there is no bit to allocate set bit_target as total mb count */
+        rc_syn->bit_target = mb_width * mb_height;
+    }
+    mpp_rc_record_param(&p->rc_list, p->rc, rc_syn);
 
     task->syntax.data   = &p->syntax;
     task->syntax.number = 1;
@@ -225,12 +245,15 @@ MPP_RET h264e_config(void *ctx, RK_S32 cmd, void *param)
                     rc->quality);
             ret = MPP_ERR_VALUE;
         }
-        if ((rc->bps_target >= 100 * SZ_1M || rc->bps_target <= 1 * SZ_1K) ||
-            (rc->bps_max    >= 100 * SZ_1M || rc->bps_max    <= 1 * SZ_1K) ||
-            (rc->bps_min    >= 100 * SZ_1M || rc->bps_min    <= 1 * SZ_1K)) {
-            mpp_err("invalid bit per second %d [%d:%d] out of range 1K~100M\n",
-                    rc->bps_target, rc->bps_min, rc->bps_max);
-            ret = MPP_ERR_VALUE;
+        if (rc->rc_mode != MPP_ENC_RC_MODE_VBR ||
+            rc->quality != MPP_ENC_RC_QUALITY_CQP) {
+            if ((rc->bps_target >= 100 * SZ_1M || rc->bps_target <= 1 * SZ_1K) ||
+                (rc->bps_max    >= 100 * SZ_1M || rc->bps_max    <= 1 * SZ_1K) ||
+                (rc->bps_min    >= 100 * SZ_1M || rc->bps_min    <= 1 * SZ_1K)) {
+                mpp_err("invalid bit per second %d [%d:%d] out of range 1K~100M\n",
+                        rc->bps_target, rc->bps_min, rc->bps_max);
+                ret = MPP_ERR_VALUE;
+            }
         }
 
         if (!ret) {
@@ -258,6 +281,8 @@ MPP_RET h264e_callback(void *ctx, void *feedback)
 
     p->result = *fb->result;
     mpp_rc_update_hw_result(p->rc, fb->result);
+    mpp_rc_calc_real_bps(&p->rc_list, p->rc, fb->result->bits);
+
     return MPP_OK;
 }
 

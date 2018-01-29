@@ -7,17 +7,15 @@ option(H265D_TEST "Build codec h265d_parse unit test" ON)
 if(H265D_TEST)
     add_executable(h265d_parser_test h265d_parser_test.c)
     if(ANDROID)
-        target_link_libraries(h265d_parser_test rockchip_mpp utils)
+        target_link_libraries(h265d_parser_test ${MPP_SHARED} utils)
     elseif(UNIX_DEBUG)
         set(OPENHEVCSO "${CMAKE_SOURCE_DIR}/mpp/codec/dec/h265/test")
         add_library(openhevcwrapper SHARED IMPORTED)
-        set_target_properties(openhevcwrapper PROPERTIES
-                                IMPORTED_LOCATION
-                        "${OPENHEVCSO}/libLibOpenHevcWrapper.so")
-        target_link_libraries(h265d_parser_test openhevcwrapper m
-                              rockchip_mpp utils)
+        set_target_properties(openhevcwrapper PROPERTIES IMPORTED_LOCATION
+                              "${OPENHEVCSO}/libLibOpenHevcWrapper.so")
+        target_link_libraries(h265d_parser_test openhevcwrapper m ${MPP_SHARED} utils)
     else()
-        target_link_libraries(h265d_parser_test rockchip_mpp utils)
+        target_link_libraries(h265d_parser_test ${MPP_SHARED} utils)
     endif()
     set_target_properties(h265d_parser_test PROPERTIES FOLDER "mpp/test")
 endif()

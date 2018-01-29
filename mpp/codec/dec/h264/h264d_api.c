@@ -470,11 +470,17 @@ __FAILED:
 MPP_RET  h264d_control(void *decoder, RK_S32 cmd_type, void *param)
 {
     MPP_RET ret = MPP_ERR_UNKNOW;
+    H264_DecCtx_t   *dec = (H264_DecCtx_t *)decoder;
 
     INP_CHECK(ret, !decoder);
+    switch (cmd_type) {
+    case MPP_DEC_SET_DISABLE_ERROR: {
+        dec->disable_error = *((RK_U32 *)param);
+    }
+    default : {
+    } break;
+    }
 
-    (void)cmd_type;
-    (void)param;
 __RETURN:
     return ret = MPP_OK;
 }
@@ -503,24 +509,21 @@ MPP_RET h264d_prepare(void *decoder, MppPacket pkt, HalDecTask *task)
     p_Inp->in_pkt = pkt;
     p_Inp->in_pts = mpp_packet_get_pts(pkt);
     p_Inp->in_dts = mpp_packet_get_dts(pkt);
+    p_Inp->in_length = mpp_packet_get_length(pkt);
+    p_Inp->pkt_eos = mpp_packet_get_eos(pkt);
+    p_Inp->in_buf = (RK_U8 *)mpp_packet_get_pos(pkt);
 
-    if (mpp_packet_get_eos(pkt)) {
-        p_Inp->pkt_eos     = 1;
+    if (p_Inp->pkt_eos) {
         p_Inp->has_get_eos = 1;
         if (p_Inp->in_length < 4) {
+            p_Inp->in_buf      = NULL;
+            p_Inp->in_length   = 0;
             task->flags.eos = p_Inp->pkt_eos;
             h264d_flush_dpb_eos(p_Dec);
             goto __RETURN;
         }
-        p_Inp->in_buf      = NULL;
-        p_Inp->in_length   = 0;
-
-
-    } else {
-        p_Inp->in_buf      = (RK_U8 *)mpp_packet_get_pos(pkt);
-        p_Inp->in_length   = mpp_packet_get_length(pkt);
-        p_Inp->pkt_eos     = 0;
     }
+
     if (p_Inp->in_length > MAX_STREM_IN_SIZE) {
         H264D_ERR("[pkt_in_timeUs] input error, stream too large, pts=%lld, eos=%d, len=%d, pkt_no=%d",
                   p_Inp->in_pts, p_Inp->pkt_eos, p_Inp->in_length, p_Dec->p_Vid->g_framecnt);
@@ -601,7 +604,6 @@ MPP_RET h264d_parse(void *decoder, HalDecTask *in_task)
         ret = update_dpb(p_Dec);
         if (in_task->flags.eos) {
             h264d_flush_dpb_eos(p_Dec);
-            goto __RETURN;
         }
         if (ret) {
             goto __FAILED;
@@ -610,7 +612,8 @@ MPP_RET h264d_parse(void *decoder, HalDecTask *in_task)
         in_task->syntax.number = p_Dec->dxva_ctx->syn.num;
         in_task->syntax.data   = (void *)p_Dec->dxva_ctx->syn.buf;
         in_task->flags.used_for_ref = p_err->used_ref_flag;
-        in_task->flags.had_error = (p_err->dpb_err_flag | p_err->cur_err_flag) ? 1 : 0;
+        in_task->flags.had_error = (!p_Dec->disable_error
+                                    && (p_err->dpb_err_flag | p_err->cur_err_flag)) ? 1 : 0;
     }
 __RETURN:
 
@@ -618,6 +621,7 @@ __RETURN:
 
 __FAILED: {
         H264_StorePic_t *dec_pic = p_Dec->p_Vid->dec_pic;
+        in_task->flags.had_error = 1;
         if (dec_pic) {
             H264D_WARNNING("[h264d_parse] h264d_parse failed.\n");
             if (dec_pic->mem_mark
