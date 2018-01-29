@@ -19,9 +19,6 @@
 #include <string.h>
 #include <math.h>
 #include <limits.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 
 #include "mpp_device.h"
 #include "mpp_common.h"
@@ -33,8 +30,6 @@
 #include "hal_h264e_rkv_stream.h"
 #include "hal_h264e_rkv_utils.h"
 #include "hal_h264e_rkv_nal.h"
-
-static RK_U32 fs_size_limit_debug = 0;
 
 static const RK_U32 h264e_h3d_tbl[40] = {
     0x0b080400, 0x1815120f, 0x23201e1b, 0x2c2a2725,
@@ -59,6 +54,7 @@ static H264eRkvMbRcMcfg mb_rc_m_cfg[H264E_MB_RC_M_NUM] = {
     {0,         0,           1,     15}, // mode = 5
     {16,       2.8,          1,     20}, // mode = 6
 };
+
 
 static H264eRkvMbRcQRcfg mb_rc_qr_cfg[9] = {
     /*qp min offset to qp hdr, qp_range  */
@@ -314,7 +310,6 @@ MPP_RET hal_h264e_rkv_init(void *hal, MppHalCfg *cfg)
     h264e_hal_rkv_buffers *buffers = NULL;
 
     h264e_hal_enter();
-    mpp_env_get_u32("hal_rkv_h264e_fs_size", &fs_size_limit_debug, 0);
 
     ctx->ioctl_input    = mpp_calloc(H264eRkvIoctlInput, 1);
     ctx->ioctl_output   = mpp_calloc(H264eRkvIoctlOutput, 1);
@@ -1135,8 +1130,6 @@ MPP_RET hal_h264e_rkv_gen_regs(void *hal, HalTaskInfo *task)
     }
 
     memset(regs, 0, sizeof(H264eRkvRegSet));
-
-    h264e_rkv_dump_mpp_strm_in(ctx, enc_task->input);
 
     regs->swreg01.rkvenc_ver      = 0x1;
 

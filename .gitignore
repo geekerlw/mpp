@@ -51,10 +51,6 @@ _stdint.h
 *.o
 Makefile.in
 Makefile
-*~
-*.swp
-*.gc??
-
 /m4
 tmp-orc.c
 *orc.h
@@ -73,25 +69,6 @@ Build
 /test-driver
 *.log
 *.trs
-
-/build
-/subprojects
-/obj-arm-linux-gnueabihf/
-/obj-aarch64-linux-gnu/
-
-/debian/.debhelper/
-/debian/debhelper-build-stamp
-/debian/files
-/debian/librockchip-mpp-dev.substvars
-/debian/librockchip-mpp-dev/
-/debian/librockchip-mpp-static.substvars
-/debian/librockchip-mpp-static/
-/debian/librockchip-mpp1.substvars
-/debian/librockchip-mpp1/
-/debian/librockchip-vpu0.substvars
-/debian/librockchip-vpu0/
-/debian/tmp/
-/mpp/version.h
 
 /subprojects
 

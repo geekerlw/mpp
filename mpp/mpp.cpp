@@ -33,7 +33,6 @@
 
 #define MPP_TEST_FRAME_SIZE     SZ_1M
 #define MPP_TEST_PACKET_SIZE    SZ_512K
-#define MPP_MAX_INPUT_PACKETS   4
 
 Mpp::Mpp()
     : mPackets(NULL),
@@ -103,8 +102,8 @@ MPP_RET Mpp::init(MppCtxType type, MppCodingType coding)
 
             mpp_task_queue_init(&mInputTaskQueue);
             mpp_task_queue_init(&mOutputTaskQueue);
-            mpp_task_queue_setup(mInputTaskQueue, MPP_MAX_INPUT_PACKETS);
-            mpp_task_queue_setup(mOutputTaskQueue, MPP_MAX_INPUT_PACKETS);
+            mpp_task_queue_setup(mInputTaskQueue, 4);
+            mpp_task_queue_setup(mOutputTaskQueue, 4);
         } else {
             mThreadCodec = new MppThread(mpp_dec_advanced_thread, this, "mpp_dec_parser");
 
@@ -259,7 +258,7 @@ MPP_RET Mpp::put_packet(MppPacket packet)
     AutoMutex autoLock(mPackets->mutex());
     RK_U32 eos = mpp_packet_get_eos(packet);
 
-    if (mPackets->list_size() < MPP_MAX_INPUT_PACKETS || eos) {
+    if (mPackets->list_size() < 4 || eos) {
         MppPacket pkt;
         if (MPP_OK != mpp_packet_copy_init(&pkt, packet))
             return MPP_NOK;

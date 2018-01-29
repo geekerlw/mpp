@@ -82,6 +82,7 @@ static RK_S32 vpu_api_set_client_type(int dev, RK_S32 client_type)
     return ret;
 }
 
+
 int VPUClientInit(VPU_CLIENT_TYPE type)
 {
     int ret;

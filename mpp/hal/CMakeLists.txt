@@ -20,6 +20,8 @@ add_library(mpp_hal STATIC
     mpp_hal.cpp
     )
 
+set_target_properties(mpp_hal PROPERTIES FOLDER "mpp/hal")
+
 # ----------------------------------------------------------------------------
 # add hardware worker implement
 # ----------------------------------------------------------------------------

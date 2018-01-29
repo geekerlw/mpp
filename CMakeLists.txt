@@ -238,32 +238,51 @@ if(EXISTS "${PROJECT_SOURCE_DIR}/.svn/")
                     set(_Subversion_SAVED_LC_ALL "$ENV{LC_ALL}")
                     set(ENV{LC_ALL} C)
 
-PROJECT(rockchip_media_process_platform C CXX)
-INCLUDE(GNUInstallDirs)
+                    execute_process(COMMAND ${TORTOISE_WCREV_EXECUTABLE} ${dir}
+                    OUTPUT_VARIABLE ${prefix}_WC_INFO
+                    ERROR_VARIABLE Subversion_svn_info_error
+                    RESULT_VARIABLE Subversion_svn_info_result
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_STRIP_TRAILING_WHITESPACE)
 
-pkg_search_module(PTHREAD pthread)
+                    if(NOT ${Subversion_svn_info_result} EQUAL 0)
+                        message(SEND_ERROR "Command \"${TORTOISE_WCREV_EXECUTABLE} ${dir}\" failed with output:\n${Subversion_svn_info_error}")
+                    else()
+                        string(REGEX REPLACE "^(.*\n)?Last committed at revision ([0-9]*)\n.*"
+                        "\\2" ${prefix}_WC_REVISION "${${prefix}_WC_INFO}")
+                    endif()
+                    set(Project_WC_LAST_CHANGED_AUTHOR "unknown")
+                    set(Project_WC_LAST_CHANGED_DATE   "unknown")
 
-ADD_DEFINITIONS(-Wmissing-declarations -Wall -Wextra -Wshadow -ffast-math)
-set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Wall -O0 -g3")
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Wall -O0 -g3")
-set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Os")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Os")
+                    # restore the previous LC_ALL
+                    set(ENV{LC_ALL} ${_Subversion_SAVED_LC_ALL})
+                endmacro()
+            endif (NOT TORTOISE_WCREV_EXECUTABLE)
+        endif(WIN32)
+    endif(Subversion_FOUND)
+endif(EXISTS "${PROJECT_SOURCE_DIR}/.svn/")
 
-# putting those into config.h would be better
-set(RKPLATFORM "" CACHE BOOL "Enable RK HW CONFIG")
-if(RKPLATFORM)
-ADD_DEFINITIONS(-DRKPLATFORM)
-endif(RKPLATFORM)
+if(${HAVE_SVN})
+    Subversion_WC_INFO(${PROJECT_SOURCE_DIR} Project)
+
+    message(STATUS "Current svn revision is ${Project_WC_REVISION}")
+    set(VERSION_REVISION        ${Project_WC_REVISION})
+    set(VERSION_LAST_AUTHOR     ${Project_WC_LAST_CHANGED_AUTHOR})
+    set(VERSION_LAST_DATA       ${Project_WC_LAST_CHANGED_DATE})
+    set(VERSION_ONE_LINE        "${VERSION_REVISION} author: ${VERSION_LAST_AUTHOR} date: ${VERSION_LAST_DATA}")
+    set(VERSION_VER_NUM         ${VERSION_REVISION})
+else()
+    set(VERSION_REVISION -1)
+endif()
 
 # ----------------------------------------------------------------------------
 # Create git version information
 # ----------------------------------------------------------------------------
 if(EXISTS "${PROJECT_SOURCE_DIR}/.git")
-    find_package(Git)
+    find_host_package(Git)
     if(GIT_FOUND)
         # get author
         execute_process(COMMAND ${GIT_EXECUTABLE} log -1 --format=%an
-            WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
             OUTPUT_VARIABLE EXEC_OUT
             ERROR_VARIABLE EXEC_ERROR
             RESULT_VARIABLE EXEC_RET
@@ -277,7 +296,6 @@ if(EXISTS "${PROJECT_SOURCE_DIR}/.git")
 
         # get date
         execute_process(COMMAND ${GIT_EXECUTABLE} log -1 --format=%ad
-            WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
             OUTPUT_VARIABLE EXEC_OUT
             ERROR_VARIABLE EXEC_ERROR
             RESULT_VARIABLE EXEC_RET
@@ -291,7 +309,6 @@ if(EXISTS "${PROJECT_SOURCE_DIR}/.git")
 
         # get version hash
         execute_process(COMMAND ${GIT_EXECUTABLE} log -1 --format=%H
-            WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
             OUTPUT_VARIABLE EXEC_OUT
             ERROR_VARIABLE EXEC_ERROR
             RESULT_VARIABLE EXEC_RET
@@ -304,7 +321,6 @@ if(EXISTS "${PROJECT_SOURCE_DIR}/.git")
 
         # get one line version information
         execute_process(COMMAND ${GIT_EXECUTABLE} log -1 --pretty=format:"%h author: %an %s"
-            WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
             OUTPUT_VARIABLE EXEC_OUT
             ERROR_VARIABLE EXEC_ERROR
             RESULT_VARIABLE EXEC_RET
@@ -458,6 +474,7 @@ add_subdirectory(utils)
 #  Media Process Platform library
 # ----------------------------------------------------------------------------
 # Media Process Platform include
+include_directories(mpp/inc)
 add_subdirectory(mpp)
 
 # ----------------------------------------------------------------------------

@@ -6,6 +6,8 @@
 option(H265D_TEST "Build codec h265d_parse unit test" ON)
 if(H265D_TEST)
     add_executable(h265d_parser_test h265d_parser_test.c)
+	include_directories(.)
+	link_directories(.)
     if(ANDROID)
         target_link_libraries(h265d_parser_test ${MPP_SHARED} utils)
     elseif(UNIX_DEBUG)

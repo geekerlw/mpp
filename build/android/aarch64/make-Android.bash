@@ -1,15 +1,13 @@
 #!/bin/bash
 # Run this from within a bash shell
 HOST_IP=`hostname --all-ip-addresses`
-if [[ ${HOST_IP} == *"10.10.10.65"* ]] || [[ ${HOST_IP} == *"10.10.10.67"* ]];
-then
+if [ ${HOST_IP} == "10.10.10.65" ] || [ ${HOST_IP} == "10.10.10.67" ]; then
     ANDROID_NDK=/home/pub/ndk/android-ndk-r10d/
 else
-	ANDROID_SDK=~/programs/android/sdk
-    ANDROID_NDK=${ANDROID_SDK}/ndk-bundle/
+    ANDROID_NDK=~/work/android/ndk/android-ndk-r10d/
 fi
 
-rm -rf build lib
+PLATFORM=$ANDROID_NDK/platforms/android-21/arch-arm64
 
 cmake -DCMAKE_TOOLCHAIN_FILE=../android.toolchain.cmake                     \
       -DCMAKE_BUILD_TYPE=Release                                            \
@@ -33,11 +31,8 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../android.toolchain.cmake                     \
       #--debug-output                                                        \
 
 #cmake --build . --clean-first -- V=1
-cmake --build build
+cmake --build .
 
-#rename
-mv ${PWD}/lib/librockchip_vpu.so ${PWD}/lib/libvpu.so
-mv ${PWD}/lib/librockchip_mpp.so ${PWD}/lib/libmpp.so
 # ----------------------------------------------------------------------------
 # test script
 # ----------------------------------------------------------------------------

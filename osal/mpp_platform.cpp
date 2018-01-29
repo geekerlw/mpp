@@ -337,6 +337,7 @@ const char *mpp_get_vcodec_dev_name(MppCtxType type, MppCodingType coding)
     const char *dev = NULL;
 #ifdef RKPLATFORM
     RockchipSocType soc_type = MppPlatformService::get_instance()->get_soc_type();
+
     switch (soc_type) {
     case ROCKCHIP_SOC_RK3066 :
     case ROCKCHIP_SOC_RK3188 : {
